@@ -69,14 +69,17 @@ export async function getIndustryGuard(
   industry: string,
   env: { DB: D1Database; TENANT_CONFIG: KVNamespace }
 ): Promise<string> {
-  const cacheKey = `industry_guard:${industry}`;
+  // Older cached tenant records may not include industry. Never pass undefined to D1.
+  const resolvedIndustry =
+    typeof industry === "string" && industry.trim() ? industry.trim() : "general";
+  const cacheKey = `industry_guard:${resolvedIndustry}`;
   const cached = await env.TENANT_CONFIG.get(cacheKey);
   if (cached !== null) return cached;
 
   const row = await env.DB.prepare(
     `SELECT guard_text FROM industry_guards WHERE industry = ? AND enabled = 1`
   )
-    .bind(industry)
+    .bind(resolvedIndustry)
     .first<{ guard_text: string }>();
 
   const guardText = row?.guard_text ?? "";
@@ -97,7 +100,14 @@ export async function resolveTenant(
   if (cached) {
     const tenant = cached as TenantConfig;
     if (tenant.status === "suspended") return null;
-    return tenant;
+    // Normalize records cached before the industry field was introduced.
+    return {
+      ...tenant,
+      industry:
+        typeof tenant.industry === "string" && tenant.industry.trim()
+          ? tenant.industry.trim()
+          : "general",
+    };
   }
 
   const row = await env.DB.prepare(
@@ -109,8 +119,15 @@ export async function resolveTenant(
     .first<TenantConfig>();
 
   if (!row) return null;
-  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), { expirationTtl: KV_TTL });
-  return row;
+  const tenant = {
+    ...row,
+    industry:
+      typeof row.industry === "string" && row.industry.trim()
+        ? row.industry.trim()
+        : "general",
+  };
+  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(tenant), { expirationTtl: KV_TTL });
+  return tenant;
 }
 
 export async function resolveTenantByDomain(
@@ -119,7 +136,16 @@ export async function resolveTenantByDomain(
 ): Promise<TenantConfig | null> {
   const cacheKey = `domain:${hostname}`;
   const cached = await env.TENANT_CONFIG.get(cacheKey, "json");
-  if (cached) return cached as TenantConfig;
+  if (cached) {
+    const tenant = cached as TenantConfig;
+    return {
+      ...tenant,
+      industry:
+        typeof tenant.industry === "string" && tenant.industry.trim()
+          ? tenant.industry.trim()
+          : "general",
+    };
+  }
 
   const row = await env.DB.prepare(
     `SELECT id, slug, name, domain, status, plan_tier, max_concurrent_sessions,
@@ -130,8 +156,15 @@ export async function resolveTenantByDomain(
     .first<TenantConfig>();
 
   if (!row) return null;
-  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), { expirationTtl: KV_TTL });
-  return row;
+  const tenant = {
+    ...row,
+    industry:
+      typeof row.industry === "string" && row.industry.trim()
+        ? row.industry.trim()
+        : "general",
+  };
+  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(tenant), { expirationTtl: KV_TTL });
+  return tenant;
 }
 
 // ---------------------------------------------------------------------------
