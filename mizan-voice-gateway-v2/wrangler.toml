@@ -38,26 +38,22 @@ database_id = "04efb171-e903-4f16-b9c2-9ab7a0f7c9a6"
 # Create: npx wrangler kv namespace create TENANT_CONFIG
 [[kv_namespaces]]
 binding = "TENANT_CONFIG"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "86c3e5359a874940aa6fd73a56b1edaf"
 
-# R2 — Call audio recordings
-# Create: npx wrangler r2 bucket create mizan-call-records
-[[r2_buckets]]
-binding = "AUDIO_BUCKET"
-bucket_name = "mizan-call-records"
+# R2 — Call audio recordings (Enable in CF dashboard when needed)
+# [[r2_buckets]]
+# binding = "AUDIO_BUCKET"
+# bucket_name = "mizan-call-records"
 
 # Durable Object — Voice Agent (SQLite-backed for conversation persistence)
-# MIGRATION: Current class is MizanVoiceAgentV2 (tag v3).
-# This creates a NEW class with SQLite storage.
-# Old class state is NOT compatible — active calls will drop during deploy.
+# MIGRATION: Creates MizanVoiceAgent class with SQLite storage.
 [[durable_objects.bindings]]
 name = "MIZAN_VOICE_AGENT"
 class_name = "MizanVoiceAgent"
 
 [[migrations]]
-tag = "v4"
+tag = "v1"
 new_sqlite_classes = ["MizanVoiceAgent"]
-deleted_classes = ["MizanVoiceAgentV2"]
 
 # Queues — Background work (pilot expiry, usage aggregation, call recording)
 # Create: npx wrangler queues create mizan-background
@@ -66,7 +62,6 @@ binding = "BACKGROUND_QUEUE"
 queue = "mizan-background"
 
 [[queues.consumers]]
-binding = "BACKGROUND_QUEUE"
 queue = "mizan-background"
 max_batch_size = 10
 max_batch_timeout = 5
