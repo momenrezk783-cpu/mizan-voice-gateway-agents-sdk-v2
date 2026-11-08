@@ -76,6 +76,11 @@ export default {
       return handleApi(request, env, url, ctx);
     }
 
+    // Root path: serve voice page directly
+    if (url.pathname === "/" || url.pathname === "") {
+      return handlePublicVoicePage(request, env, "al-nour");
+    }
+
     // Public patient voice page: /c/:slug
     const publicMatch = url.pathname.match(/^\/c\/([\w-]+)\/?$/);
     if (publicMatch) {
