@@ -1,3 +1,3 @@
 # FOLLOW_UP
 
-Fixed the public voice page startup race and corrected a nested template-literal syntax error that prevented the Worker from compiling; the WebSocket URL now uses string concatenation inside the generated HTML. Changes are on `fix/voice-audio-init-race`; no PR has been opened, and a local TypeScript/Wrangler build plus browser/device integration test are still required.
+Fixed the public voice page startup race and the nested template-literal syntax error that blocked Worker compilation; the WebSocket URL now uses safe string concatenation inside the generated HTML. PR #2 was merged into `main` (merge commit `2fa183dff4bed8a8405944523139d6214ece77b3`); the Cloudflare deploy workflow is configured to run on pushes to `main`, but the new deployment has not yet been verified and browser/device integration testing remains outstanding.
