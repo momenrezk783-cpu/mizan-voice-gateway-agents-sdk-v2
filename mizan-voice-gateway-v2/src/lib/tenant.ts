@@ -34,6 +34,7 @@ export interface TenantVoiceConfig {
 }
 
 const KV_TTL = 60; // seconds — Cloudflare KV minimum expirationTtl is 60s
+const DEFAULT_INDUSTRY = "healthcare"; // Fail-safe default; matches migration-001 for existing tenants
 
 // ---------------------------------------------------------------------------
 // 1. Global Voice Config (Mizan Identity — LOCKED, super_admin only)
@@ -71,7 +72,7 @@ export async function getIndustryGuard(
 ): Promise<string> {
   // Older cached tenant records may not include industry. Never pass undefined to D1.
   const resolvedIndustry =
-    typeof industry === "string" && industry.trim() ? industry.trim() : "general";
+    typeof industry === "string" && industry.trim() ? industry.trim() : DEFAULT_INDUSTRY;
   const cacheKey = `industry_guard:${resolvedIndustry}`;
   const cached = await env.TENANT_CONFIG.get(cacheKey);
   if (cached !== null) return cached;
@@ -106,7 +107,7 @@ export async function resolveTenant(
       industry:
         typeof tenant.industry === "string" && tenant.industry.trim()
           ? tenant.industry.trim()
-          : "general",
+          : DEFAULT_INDUSTRY,
     };
   }
 
@@ -124,7 +125,7 @@ export async function resolveTenant(
     industry:
       typeof row.industry === "string" && row.industry.trim()
         ? row.industry.trim()
-        : "general",
+        : DEFAULT_INDUSTRY,
   };
   await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(tenant), { expirationTtl: KV_TTL });
   return tenant;
@@ -143,7 +144,7 @@ export async function resolveTenantByDomain(
       industry:
         typeof tenant.industry === "string" && tenant.industry.trim()
           ? tenant.industry.trim()
-          : "general",
+          : DEFAULT_INDUSTRY,
     };
   }
 
@@ -161,7 +162,7 @@ export async function resolveTenantByDomain(
     industry:
       typeof row.industry === "string" && row.industry.trim()
         ? row.industry.trim()
-        : "general",
+        : DEFAULT_INDUSTRY,
   };
   await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(tenant), { expirationTtl: KV_TTL });
   return tenant;
