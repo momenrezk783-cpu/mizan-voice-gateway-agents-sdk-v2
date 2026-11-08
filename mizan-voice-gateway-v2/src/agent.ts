@@ -1,22 +1,11 @@
 // ============================================================================
 // Mizan Voice Agent — Cloudflare Agents SDK with withVoice
 // ============================================================================
-// This replaces the entire manual DO + WebSocket + STT/TTS pipeline from v1.
-// The Agents SDK handles:
-//   - WebSocket connection lifecycle (Hibernation API — DOs sleep when idle)
-//   - Audio streaming (binary PCM frames from browser)
-//   - STT (Deepgram Flux on Workers AI — no API key needed)
-//   - Turn detection (model-driven — no client end-of-speech signaling)
-//   - TTS (Workers AI — no API key needed)
-//   - Conversation history persistence (SQLite-backed DO)
-//   - Reconnection (clients can resume mid-stream)
-//
-// The ONLY method we write is onTurn() — called when the patient finishes
-// speaking. We load tenant config, call the LLM, guard medical advice,
-// record the turn to D1, and return the reply text for TTS.
-//
-// Per-tenant isolation: Agent instance name = "tenantSlug:sessionId"
-// Each call gets its own isolated Agent with its own conversation state.
+// System Prompt = 4 layers (locked → additive):
+//   1. Global Mizan Identity    — super_admin only, LOCKED
+//   2. Industry Guard           — super_admin only, LOCKED
+//   3. Tenant Customization     — tenant can ADD (cannot remove core)
+//   4. Tenant Knowledge (FAQ)   — tenant can edit
 // ============================================================================
 
 import { Agent, routeAgentRequest } from "agents";
@@ -28,7 +17,13 @@ import {
 } from "agents/voice";
 import { generateText } from "ai";
 import { createAI } from "agents/models/ai-sdk";
-import { resolveTenant, getTenantVoiceConfig, getTenantKnowledge } from "./lib/tenant";
+import {
+  resolveTenant,
+  getGlobalVoiceConfig,
+  getIndustryGuard,
+  getTenantVoiceConfig,
+  getTenantKnowledge,
+} from "./lib/tenant";
 import { redactPII } from "./lib/crypto";
 
 interface Env {
@@ -56,35 +51,27 @@ interface BackgroundMessage {
   turnIndex?: number;
 }
 
-// Create the voice-enabled Agent class
 const VoiceAgent = withVoice(Agent);
 
 export class MizanVoiceAgent extends VoiceAgent<Env> {
-  // Workers AI powers STT and TTS — no external API keys required
-  // Deepgram Flux: model-driven turn detection, ultra-low latency
-  // Aura-1: natural multilingual TTS
   transcriber = new WorkersAIFluxSTT(this.env.AI);
   tts = new WorkersAITTS(this.env.AI);
 
-  // Cached tenant config (loaded once per Agent instance)
+  // Session state
   private tenantSlug: string | null = null;
   private sessionId: string | null = null;
-  private systemPrompt: string = "";
+  private globalPrompt: string = "";
+  private industryGuard: string = "";
+  private tenantCustomization: string = "";
   private knowledgeContext: string = "";
-  private allowMedicalAdvice = false;
   private escalationPhone: string | null = null;
   private turnCount = 0;
   private callStartTime = 0;
   private initialized = false;
 
-  // -------------------------------------------------------------------------
-  // Called when a WebSocket client connects — initialize tenant context
-  // -------------------------------------------------------------------------
-
   async onStart() {
     this.callStartTime = Date.now();
 
-    // Parse tenant slug and session ID from instance name: "al-nour:uuid-1234"
     const parts = this.name.split(":");
     this.tenantSlug = parts[0] ?? null;
     this.sessionId = parts[1] ?? crypto.randomUUID();
@@ -94,33 +81,32 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
       return;
     }
 
-    // Load tenant config from KV cache (fast) or D1 (source of truth)
+    // 1. Load tenant (includes industry)
     const tenant = await resolveTenant(this.tenantSlug, this.env);
     if (!tenant) {
       console.error(`Tenant not found: ${this.tenantSlug}`);
       return;
     }
 
+    // 2. Load GLOBAL Mizan identity (LOCKED — super_admin only)
+    const globalConfig = await getGlobalVoiceConfig(this.env);
+    this.globalPrompt = globalConfig.system_prompt;
+
+    // 3. Load industry guard (LOCKED — super_admin only)
+    this.industryGuard = await getIndustryGuard(tenant.industry, this.env);
+
+    // 4. Load tenant customization (ADDITIVE — tenant can edit)
     const voiceConfig = await getTenantVoiceConfig(this.tenantSlug, this.env);
-    if (!voiceConfig) {
-      console.error(`Voice config not found for tenant: ${this.tenantSlug}`);
-      return;
-    }
+    this.tenantCustomization = voiceConfig?.tenant_customization ?? "";
+    this.escalationPhone = voiceConfig?.escalation_phone ?? null;
 
-    // Load FAQ knowledge for this tenant
+    // 5. Load tenant knowledge (FAQ — tenant can edit)
     const knowledge = await getTenantKnowledge(this.tenantSlug, this.env);
-
-    // Initialize session state
-    this.systemPrompt = voiceConfig.system_prompt;
-    this.allowMedicalAdvice = voiceConfig.allow_medical_advice === 1;
-    this.escalationPhone = voiceConfig.escalation_phone;
-
-    // Build knowledge context from FAQ entries
     this.knowledgeContext = Object.entries(knowledge)
       .map(([cat, text]) => `[${cat}]: ${text}`)
       .join("\n");
 
-    // Create call session record in D1
+    // 6. Create call session record
     await this.env.DB.prepare(
       `INSERT INTO call_sessions (id, tenant_slug, direction, call_status, started_at)
        VALUES (?, ?, 'inbound', 'active', unixepoch())`
@@ -131,10 +117,6 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
     this.initialized = true;
   }
 
-  // -------------------------------------------------------------------------
-  // THE CORE METHOD — called each time the patient finishes speaking
-  // -------------------------------------------------------------------------
-
   async onTurn(transcript: string, context: VoiceTurnContext): Promise<string> {
     if (!this.initialized || !this.tenantSlug || !this.sessionId) {
       return "عذراً، حدث خطأ في تهيئة المكالمة. يرجى المحاولة مرة أخرى.";
@@ -143,7 +125,7 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
     const turnStart = Date.now();
     this.turnCount++;
 
-    // Record caller turn to D1 (PII redacted) via queue (non-blocking)
+    // Record caller turn (non-blocking via queue)
     await this.env.BACKGROUND_QUEUE.send({
       type: "record_turn",
       tenantSlug: this.tenantSlug,
@@ -153,10 +135,10 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
       turnIndex: this.turnCount,
     });
 
-    // Build the full system prompt with live FAQ context + safety rules
+    // Build the full system prompt (4 layers)
     const fullPrompt = this.buildSystemPrompt();
 
-    // Call LLM via Workers AI (PhoneLLM Mini — optimized for voice agents)
+    // Call LLM
     let reply: string;
     try {
       const ai = createAI({ binding: this.env.AI });
@@ -164,7 +146,7 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
         model: ai(this.env.PRIMARY_LLM),
         messages: [
           { role: "system", content: fullPrompt },
-          ...context.messages.slice(-10), // Last 10 turns for context window
+          ...context.messages.slice(-10),
           { role: "user", content: transcript },
         ],
         temperature: 0,
@@ -172,7 +154,7 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
       });
       reply = result.text;
     } catch (err) {
-      console.error("Primary LLM failed, using fallback:", err);
+      console.error("Primary LLM failed:", err);
       try {
         const ai = createAI({ binding: this.env.AI });
         const result = await generateText({
@@ -191,15 +173,10 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
       }
     }
 
-    // Safety: block medical advice if tenant policy disallows it
-    if (!this.allowMedicalAdvice) {
-      reply = this.guardMedicalAdvice(reply);
-    }
-
     this.turnCount++;
-
-    // Record agent turn to D1 (PII redacted) via queue
     const latency = Date.now() - turnStart;
+
+    // Record agent turn (non-blocking)
     await this.env.BACKGROUND_QUEUE.send({
       type: "record_turn",
       tenantSlug: this.tenantSlug,
@@ -210,7 +187,7 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
       turnIndex: this.turnCount,
     });
 
-    // Report per-tenant latency metric
+    // Per-tenant latency metric
     this.env.VOICE_METRICS.writeDataPoint({
       blobs: [this.tenantSlug, this.sessionId],
       doubles: [latency],
@@ -220,21 +197,14 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
     return reply;
   }
 
-  // -------------------------------------------------------------------------
-  // Called when the WebSocket connection closes — finalize session
-  // -------------------------------------------------------------------------
-
   async onClose() {
     if (!this.tenantSlug || !this.sessionId) return;
-
-    const duration = Math.floor((Date.now() - this.callStartTime) / 1000);
 
     await this.env.BACKGROUND_QUEUE.send({
       type: "end_session",
       tenantSlug: this.tenantSlug,
       sessionId: this.sessionId,
     });
-
     await this.env.BACKGROUND_QUEUE.send({
       type: "record_usage",
       tenantSlug: this.tenantSlug,
@@ -243,51 +213,38 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
   }
 
   // -------------------------------------------------------------------------
-  // System prompt builder — injects tenant personality + FAQ + safety rules
+  // System Prompt Builder — 4 layers (locked → additive)
   // -------------------------------------------------------------------------
 
   private buildSystemPrompt(): string {
-    let prompt = this.systemPrompt;
+    // Layer 1: Global Mizan Identity (LOCKED)
+    let prompt = this.globalPrompt;
 
-    // Inject live FAQ/knowledge context
+    // Layer 2: Industry Guard (LOCKED)
+    if (this.industryGuard) {
+      prompt += `\n\n--- قواعد الأمان ---\n${this.industryGuard}`;
+    }
+
+    // Layer 3: Tenant Customization (ADDITIVE — tenant adds, cannot remove)
+    if (this.tenantCustomization) {
+      prompt += `\n\n--- تعليمات خاصة ---\n${this.tenantCustomization}`;
+    }
+
+    // Layer 4: Tenant Knowledge (FAQ — tenant can edit)
     if (this.knowledgeContext) {
-      prompt += `\n\n--- معلومات العيادة الحالية ---\n${this.knowledgeContext}`;
+      prompt += `\n\n--- معلومات النشاط ---\n${this.knowledgeContext}`;
     }
 
-    // Medical advice guard (Egyptian healthcare compliance)
-    if (!this.allowMedicalAdvice) {
-      prompt += `\n\n--- قواعد الأمان ---\n`;
-      prompt += `لا تقم بتقديم أي تشخيص طبي أو نصائح علاجية أو جرعات دوائية. `;
-      prompt += `وجه المتصل لزيارة الطبيب أو الاتصال بالعيادة مباشرة. `;
-      prompt += `أنت مساعد حجز ومعلومات فقط، وليس طبيباً.`;
-    }
-
-    // Escalation number
+    // Escalation
     if (this.escalationPhone) {
-      prompt += `\n\nرقم الطوارئ/التحويل: ${this.escalationPhone}`;
+      prompt += `\n\nرقم التحويل/الطوارئ: ${this.escalationPhone}`;
     }
 
-    // Language directive
-    prompt += `\n\nتحدث باللهجة المصرية بأسلوب ودود ومهني. كن موجزاً في إجاباتك.`;
+    // Language directive (LOCKED)
+    prompt += `\n\nتحدث باللهجة المصرية بأسلوب ودود ومهني. كن موجزاً.`;
 
     return prompt;
   }
-
-  // -------------------------------------------------------------------------
-  // Medical advice guard — append disclaimer if diagnostic keywords detected
-  // -------------------------------------------------------------------------
-
-  private guardMedicalAdvice(text: string): string {
-    const diagnosticPatterns = /يشخص|علاج|دواء|جرعة|تشخيص|أعراض تدل|وصفة|مضاد حيوي/i;
-    if (diagnosticPatterns.test(text)) {
-      return text + "\n\nملاحظة: هذه معلومات عامة وليست بديلاً عن استشارة الطبيب.";
-    }
-    return text;
-  }
 }
-
-// ---------------------------------------------------------------------------
-// Export the Agent for the Worker entry point
-// ---------------------------------------------------------------------------
 
 export { routeAgentRequest };

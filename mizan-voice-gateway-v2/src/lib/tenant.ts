@@ -1,9 +1,12 @@
 // ============================================================================
-// Mizan Voice Gateway — Tenant Resolution (KV cache + D1 fallback)
+// Mizan Voice Gateway — Tenant + Global Config Resolution
 // ============================================================================
-// Resolves tenant by slug (path) or hostname (custom domain).
-// KV is the hot cache (30s TTL); D1 is the source of truth.
-// On cache miss, reads D1 and backfills KV.
+// Three layers of configuration:
+//   1. Global Voice Config  — Mizan's Egyptian identity (super_admin only, LOCKED)
+//   2. Industry Guards      — Safety rules per industry (super_admin only, LOCKED)
+//   3. Tenant Customization — Per-tenant ADDITIVE context (tenant can edit)
+//   4. Tenant Knowledge     — FAQ/schedules/prices (tenant can edit)
+// ============================================================================
 
 export interface TenantConfig {
   id: string;
@@ -15,30 +18,81 @@ export interface TenantConfig {
   max_concurrent_sessions: number;
   theme_color: string;
   logo_url: string | null;
+  industry: string;
+}
+
+export interface GlobalVoiceConfig {
+  system_prompt: string;
+  voice_id: string;
 }
 
 export interface TenantVoiceConfig {
   tenant_slug: string;
-  system_prompt: string;
-  voice_id: string;
-  allow_medical_advice: number; // 0 or 1
+  tenant_customization: string;  // ADDITIVE — tenant can edit this
   escalation_phone: string | null;
   ttl_seconds: number;
 }
 
 const KV_TTL = 60; // seconds — Cloudflare KV minimum expirationTtl is 60s
 
-/**
- * Resolve a tenant by slug. Checks KV first, falls back to D1.
- * Returns null if tenant doesn't exist or is suspended.
- */
+// ---------------------------------------------------------------------------
+// 1. Global Voice Config (Mizan Identity — LOCKED, super_admin only)
+// ---------------------------------------------------------------------------
+
+export async function getGlobalVoiceConfig(
+  env: { DB: D1Database; TENANT_CONFIG: KVNamespace }
+): Promise<GlobalVoiceConfig> {
+  const cacheKey = "global:voice_config";
+  const cached = await env.TENANT_CONFIG.get(cacheKey, "json");
+  if (cached) return cached as GlobalVoiceConfig;
+
+  const row = await env.DB.prepare(
+    `SELECT system_prompt, voice_id FROM global_voice_config WHERE id = 1`
+  ).first<GlobalVoiceConfig>();
+
+  if (!row) {
+    return {
+      system_prompt: "أنت ميزان، المساعد الصوتي المصري العام.",
+      voice_id: "SAz9YHcvj6GT2YYXdXww",
+    };
+  }
+
+  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), { expirationTtl: 300 });
+  return row;
+}
+
+// ---------------------------------------------------------------------------
+// 2. Industry Guard (Safety rule — LOCKED, super_admin only)
+// ---------------------------------------------------------------------------
+
+export async function getIndustryGuard(
+  industry: string,
+  env: { DB: D1Database; TENANT_CONFIG: KVNamespace }
+): Promise<string> {
+  const cacheKey = `industry_guard:${industry}`;
+  const cached = await env.TENANT_CONFIG.get(cacheKey);
+  if (cached !== null) return cached;
+
+  const row = await env.DB.prepare(
+    `SELECT guard_text FROM industry_guards WHERE industry = ? AND enabled = 1`
+  )
+    .bind(industry)
+    .first<{ guard_text: string }>();
+
+  const guardText = row?.guard_text ?? "";
+  await env.TENANT_CONFIG.put(cacheKey, guardText, { expirationTtl: 300 });
+  return guardText;
+}
+
+// ---------------------------------------------------------------------------
+// 3. Tenant Resolution (by slug or custom domain)
+// ---------------------------------------------------------------------------
+
 export async function resolveTenant(
   slug: string,
   env: { DB: D1Database; TENANT_CONFIG: KVNamespace }
 ): Promise<TenantConfig | null> {
   const cacheKey = `tenant:${slug}`;
-
-  // 1. Try KV cache
   const cached = await env.TENANT_CONFIG.get(cacheKey, "json");
   if (cached) {
     const tenant = cached as TenantConfig;
@@ -46,86 +100,68 @@ export async function resolveTenant(
     return tenant;
   }
 
-  // 2. Fallback to D1
   const row = await env.DB.prepare(
-    `SELECT id, slug, name, domain, status, plan_tier, max_concurrent_sessions, theme_color, logo_url
+    `SELECT id, slug, name, domain, status, plan_tier, max_concurrent_sessions,
+            theme_color, logo_url, industry
      FROM tenants WHERE slug = ? AND status != 'suspended'`
   )
     .bind(slug)
     .first<TenantConfig>();
 
   if (!row) return null;
-
-  // 3. Backfill KV cache
-  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), {
-    expirationTtl: KV_TTL,
-  });
-
+  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), { expirationTtl: KV_TTL });
   return row;
 }
 
-/**
- * Resolve a tenant by custom domain hostname.
- */
 export async function resolveTenantByDomain(
   hostname: string,
   env: { DB: D1Database; TENANT_CONFIG: KVNamespace }
 ): Promise<TenantConfig | null> {
   const cacheKey = `domain:${hostname}`;
-
   const cached = await env.TENANT_CONFIG.get(cacheKey, "json");
   if (cached) return cached as TenantConfig;
 
   const row = await env.DB.prepare(
-    `SELECT id, slug, name, domain, status, plan_tier, max_concurrent_sessions, theme_color, logo_url
+    `SELECT id, slug, name, domain, status, plan_tier, max_concurrent_sessions,
+            theme_color, logo_url, industry
      FROM tenants WHERE domain = ? AND status != 'suspended'`
   )
     .bind(hostname)
     .first<TenantConfig>();
 
   if (!row) return null;
-
-  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), {
-    expirationTtl: KV_TTL,
-  });
-
+  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), { expirationTtl: KV_TTL });
   return row;
 }
 
-/**
- * Get the full voice config for a tenant (prompt, voice ID, policy).
- * Cached in KV under a separate key.
- */
+// ---------------------------------------------------------------------------
+// 4. Tenant Voice Config (customization + escalation — tenant can edit)
+// ---------------------------------------------------------------------------
+
 export async function getTenantVoiceConfig(
   slug: string,
   env: { DB: D1Database; TENANT_CONFIG: KVNamespace }
 ): Promise<TenantVoiceConfig | null> {
   const cacheKey = `voice_config:${slug}`;
-
   const cached = await env.TENANT_CONFIG.get(cacheKey, "json");
   if (cached) return cached as TenantVoiceConfig;
 
   const row = await env.DB.prepare(
-    `SELECT tenant_slug, system_prompt, voice_id, allow_medical_advice,
-            escalation_phone, ttl_seconds
+    `SELECT tenant_slug, tenant_customization, escalation_phone, ttl_seconds
      FROM tenant_voice_config WHERE tenant_slug = ?`
   )
     .bind(slug)
     .first<TenantVoiceConfig>();
 
   if (!row) return null;
-
-  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), {
-    expirationTtl: KV_TTL,
-  });
-
+  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), { expirationTtl: KV_TTL });
   return row;
 }
 
-/**
- * Get all FAQ/knowledge entries for a tenant, grouped by category.
- * Injected into the LLM system prompt as live context.
- */
+// ---------------------------------------------------------------------------
+// 5. Tenant Knowledge (FAQ — tenant can edit)
+// ---------------------------------------------------------------------------
+
 export async function getTenantKnowledge(
   slug: string,
   env: { DB: D1Database }
@@ -143,9 +179,10 @@ export async function getTenantKnowledge(
   return knowledge;
 }
 
-/**
- * Invalidate KV cache for a tenant (call after admin updates config).
- */
+// ---------------------------------------------------------------------------
+// Cache Invalidation
+// ---------------------------------------------------------------------------
+
 export async function invalidateTenantCache(
   slug: string,
   domain: string | null,
@@ -156,4 +193,10 @@ export async function invalidateTenantCache(
     env.TENANT_CONFIG.delete(`voice_config:${slug}`),
     domain ? env.TENANT_CONFIG.delete(`domain:${domain}`) : Promise.resolve(),
   ]);
+}
+
+export async function invalidateGlobalCache(
+  env: { TENANT_CONFIG: KVNamespace }
+): Promise<void> {
+  await env.TENANT_CONFIG.delete("global:voice_config");
 }
