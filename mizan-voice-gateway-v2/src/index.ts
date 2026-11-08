@@ -813,7 +813,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         audioSource.connect(audioNode);audioNode.connect(audioCtx.destination);
         audioNode.port.onmessage=e=>{if(attempt===callAttempt&&ws&&ws.readyState===WebSocket.OPEN&&!muted)ws.send(e.data)};
         s.textContent='جاري الاتصال بالمساعد...';
-        const socket=new WebSocket(`${WS_BASE}/agents/mizan-voice-agent/${TENANT_SLUG}?session_id=${SESSION_ID}`);
+        const socket=new WebSocket(WS_BASE+'/agents/mizan-voice-agent/'+TENANT_SLUG+'?session_id='+SESSION_ID);
         ws=socket;
         socket.binaryType='arraybuffer';
         socket.onopen=()=>{
