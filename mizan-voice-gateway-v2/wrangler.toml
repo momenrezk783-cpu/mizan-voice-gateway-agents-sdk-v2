@@ -17,6 +17,13 @@ main = "src/index.ts"
 compatibility_date = "2026-11-08"
 compatibility_flags = ["nodejs_compat"]
 
+routes = [
+	{ pattern = "mizanconsult.com", custom_domain = true },
+	{ pattern = "www.mizanconsult.com", custom_domain = true },
+	{ pattern = "voice.mizanconsult.com", custom_domain = true }
+]
+workers_dev = true
+
 [vars]
 ENVIRONMENT = "production"
 VOICE_WS_BASE = "wss://voice.mizanconsult.com"
