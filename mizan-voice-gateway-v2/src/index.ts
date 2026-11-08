@@ -605,7 +605,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         try{
           stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:16000}});
           audioCtx=new AudioContext({sampleRate:16000});
-          const wp=new Blob([`class PCMProcessor extends AudioWorkletProcessor{process(i){const d=i[0];if(d&&d[0]){const f=d[0];const p=new Int16Array(f.length);for(let j=0;j<f.length;j++){const s=Math.max(-1,Math.min(1,f[j]));p[j]=s<0?s*0x8000:s*0x7FFF}this.port.postMessage(p.buffer,[p.buffer])}return true}}registerProcessor('pcm',PCMProcessor)`],{type:'application/javascript'});
+          const wp=new Blob([\`class PCMProcessor extends AudioWorkletProcessor{process(i){const d=i[0];if(d&&d[0]){const f=d[0];const p=new Int16Array(f.length);for(let j=0;j<f.length;j++){const s=Math.max(-1,Math.min(1,f[j]));p[j]=s<0?s*0x8000:s*0x7FFF}this.port.postMessage(p.buffer,[p.buffer])}return true}}registerProcessor('pcm',PCMProcessor)\`],{type:'application/javascript'});
           await audioCtx.audioWorklet.addModule(URL.createObjectURL(wp));
           const src=audioCtx.createMediaStreamSource(stream);
           const node=new AudioWorkletNode(audioCtx,'pcm');
