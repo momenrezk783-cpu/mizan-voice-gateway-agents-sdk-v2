@@ -162,7 +162,8 @@ async function handleVoiceWebSocket(
   });
 
   // routeAgentRequest handles DO instantiation + WebSocket upgrade
-  return routeAgentRequest(agentRequest, env, "mizan-voice-agent") ?? new Response("Agent not found", { status: 404 });
+  // It auto-maps the MIZAN_VOICE_AGENT binding to /agents/mizan-voice-agent/{name}
+  return routeAgentRequest(agentRequest, env) ?? new Response("Agent not found", { status: 404 });
 }
 
 // ---------------------------------------------------------------------------
@@ -601,9 +602,16 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         calling=true;b.classList.remove('connecting');b.classList.add('active');ow.classList.remove('connecting');ow.classList.add('active');
         s.textContent='متصل — تحدث الآن';s.classList.add('connected');c.classList.add('visible');v.classList.add('visible');
         startT=Date.now();timerInt=setInterval(()=>{const e=Math.floor((Date.now()-startT)/1000);document.getElementById('timer').textContent=String(Math.floor(e/60)).padStart(2,'0')+':'+String(e%60).padStart(2,'0')},1000);
-        try{stream=await navigator.mediaDevices.getUserMedia({audio:true});audioCtx=new AudioContext({sampleRate:16000});
-        const src=audioCtx.createMediaStreamSource(stream);const proc=audioCtx.createScriptProcessor(4096,1,1);src.connect(proc);proc.connect(audioCtx.destination);
-        proc.onaudioprocess=e=>{if(ws&&ws.readyState===1&&!muted)ws.send(e.inputBuffer.getChannelData(0).buffer)}}catch{endCall()}
+        try{
+          stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:16000}});
+          audioCtx=new AudioContext({sampleRate:16000});
+          const wp=new Blob([`class PCMProcessor extends AudioWorkletProcessor{process(i){const d=i[0];if(d&&d[0]){const f=d[0];const p=new Int16Array(f.length);for(let j=0;j<f.length;j++){const s=Math.max(-1,Math.min(1,f[j]));p[j]=s<0?s*0x8000:s*0x7FFF}this.port.postMessage(p.buffer,[p.buffer])}return true}}registerProcessor('pcm',PCMProcessor)`],{type:'application/javascript'});
+          await audioCtx.audioWorklet.addModule(URL.createObjectURL(wp));
+          const src=audioCtx.createMediaStreamSource(stream);
+          const node=new AudioWorkletNode(audioCtx,'pcm');
+          src.connect(node);node.connect(audioCtx.destination);
+          node.port.onmessage=e=>{if(ws&&ws.readyState===1&&!muted)ws.send(e.data)};
+        }catch(err){console.error('Audio init failed:',err);endCall()}
       };
       ws.onmessage=e=>{if(e.data instanceof ArrayBuffer)play(e.data);else{try{const m=JSON.parse(e.data);if(m.type==='transcript')addTurn(m.speaker,m.text)}catch{}}};
       ws.onclose=()=>endCall();ws.onerror=()=>{document.getElementById('status').textContent='خطأ في الاتصال';document.getElementById('status').classList.add('error');endCall()}
