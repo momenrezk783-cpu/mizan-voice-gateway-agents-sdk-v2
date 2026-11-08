@@ -155,7 +155,7 @@ export class MizanVoiceAgent extends VoiceAgent<Env> {
       reply = result.text;
     } catch (err) {
       console.error("Primary LLM failed:", err);
-    }  try {
+      try {
         const ai = createAI({ binding: this.env.AI });
         const result = await generateText({
           model: ai(this.env.FALLBACK_LLM),

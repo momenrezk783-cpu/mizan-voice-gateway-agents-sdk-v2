@@ -4,7 +4,7 @@
 -- Compliance: Egyptian Law No. 151 of 2020 (AES-GCM 256-bit PII encryption)
 -- ============================================================================
 
--- 1. Tenant Registry (Clinics & Organizations)
+-- 1. Tenant Registry (Organizations, Companies & Multi-Industry Businesses)
 CREATE TABLE IF NOT EXISTS tenants (
     id TEXT PRIMARY KEY,                          -- e.g. 'c_al-nour-clinic'
     slug TEXT NOT NULL UNIQUE,                    -- e.g. 'al-nour', 'demo-video', 'mizan-hq'
@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS call_turns (
 CREATE INDEX IF NOT EXISTS idx_turns_session ON call_turns(session_id, turn_index ASC);
 CREATE INDEX IF NOT EXISTS idx_turns_tenant ON call_turns(tenant_slug, created_at DESC);
 
--- 6. Clinic Portal User Authentication
+-- 6. Organization & Tenant Portal User Authentication
 CREATE TABLE IF NOT EXISTS portal_users (
     id TEXT PRIMARY KEY,
     tenant_slug TEXT NOT NULL,

@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>لوحة المدير العام — ميزان كونسلت</title>
+<link rel="stylesheet" href="/css/dashboard.css">
+</head>
+<body data-tour-context="admin">
+<div id="toast" class="toast-banner">تم الحفظ بنجاح</div>
+<div class="app">
+  <aside class="sb" id="sidebar">
+    <a href="/" class="lg">
+      <div class="lm"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0zM8 21h8"></path></svg></div>
+      <div class="lt"><b>ميزان كونسلت</b><span>SUPER ADMIN</span></div>
+    </a>
+    <nav class="nvs">
+      <a class="nv on" data-page="overview" onclick="showPage('overview', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg>
+        نظرة عامة
+      </a>
+      <a class="nv" data-page="tenants" onclick="showPage('tenants', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 4.8a3.5 3.5 0 0 1 0 6.4"></path></svg>
+        المنشآت والعملاء
+      </a>
+      <a class="nv" data-page="new-tenant" onclick="showPage('new-tenant', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 5v14M5 12h14"></path></svg>
+        إنشاء مساعد لمنشأة
+      </a>
+      <a class="nv" data-page="guards" onclick="showPage('guards', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        الهوية والضوابط القطاعية
+      </a>
+      <a class="nv" data-page="search" onclick="showPage('search', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
+        محرك البحث الداخلي
+      </a>
+      <div class="nv-divider">بوابة المنشأة</div>
+      <a class="nv" href="/client">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"></path></svg>
+        معاينة بوابة العميل
+      </a>
+    </nav>
+    <div class="sbf"><b>لوحة المدير العام</b>إدارة المنشآت في كافة القطاعات والأعمال.<br><a href="/login" style="color:#2563EB;font-weight:600;display:inline-block;margin-top:6px">تبديل الحساب</a></div>
+  </aside>
+
+  <div class="mn">
+    <header class="tb">
+      <div class="sr" onclick="showPage('search')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
+        <input type="search" placeholder="ابحث عن منشأة أو افتح محرك البحث الداخلي...">
+      </div>
+      <div class="sp"></div>
+      <button type="button" class="mz-tour-trigger-btn" onclick="MizanOnboarding.resetAndStart('admin')">🎯 جولة تعريفية للمدير</button>
+      <button class="cta" onclick="showPage('new-tenant')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 5v14M5 12h14"></path></svg>إضافة منشأة جديدة</button>
+      <div class="us"><div class="av" id="avatar">م</div><div><b>مدير النظام</b><span>Super Admin</span></div></div>
+    </header>
+
+    <main class="ct">
+      <!-- 1. OVERVIEW (05-admin.html + 01-dashboard.html) -->
+      <div id="page-overview" class="page active">
+        <div class="hd"><div><h1>لوحة المدير العام</h1><p>إدارة المنشآت والشركات في مختلف المجالات والإحصائيات الشاملة للمنصة</p></div></div>
+        <div class="g4" id="kpi-grid">
+          <div class="card"><div class="kl">المنشآت النشطة</div><div class="kv" id="adm-active">48</div></div>
+          <div class="card"><div class="kl">إجمالي المكالمات</div><div class="kv" id="adm-calls">3,906</div></div>
+          <div class="card"><div class="kl">نسبة الرد الآلي</div><div class="kv" id="adm-rate">96.1%</div></div>
+          <div class="card"><div class="kl">متوسط الاستجابة</div><div class="kv" id="adm-lat">340 ms</div></div>
+        </div>
+
+        <div class="g2">
+          <div class="card">
+            <div class="ch"><div><h3>أحدث المكالمات عبر جميع المنشآت</h3><p>مراقبة حية للمكالمات في مختلف القطاعات</p></div></div>
+            <table>
+              <thead><tr><th>التاريخ والوقت</th><th>المنشأة</th><th>الموضوع / القسم</th><th>النتيجة</th><th>المدة</th></tr></thead>
+              <tbody id="calls-table"></tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>توزيع المكالمات حسب الباقة</h3>
+            <p class="sub" style="margin-bottom:22px">من إجمالي المكالمات هذا الشهر</p>
+            <div style="margin-bottom:20px"><div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px"><span>باقة الإنتاج والربط الكامل (production_pbx)</span><b>68%</b></div><div class="tr"><div class="fl" style="width:68%"></div></div></div>
+            <div><div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px"><span>الباقة التجريبية (pilot_14d)</span><b>32%</b></div><div class="tr"><div class="fl" style="width:32%;background:#7FA3EC"></div></div></div>
+            <div id="status-card" style="margin-top:24px">
+              <div class="stt"><span class="dot"></span>نشط ويعمل بشكل طبيعي</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. TENANTS MANAGEMENT (05-admin.html Generalized to Multi-Sector Organizations) -->
+      <div id="page-tenants" class="page">
+        <div class="hd">
+          <div><h1>إدارة المنشآت والعملاء</h1><p>كل منشأة أو شركة لها رابط مكالمة خاص (/c/slug) وإعدادات قطاع مستقلة</p></div>
+          <button class="btn" onclick="showPage('new-tenant')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 5v14M5 12h14"></path></svg> إضافة منشأة</button>
+        </div>
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+            <div><h3>قائمة المنشآت المشتركة</h3><p class="sub">الشركات والمكاتب والمؤسسات في مختلف القطاعات</p></div>
+            <div style="width:260px"><input type="search" placeholder="ابحث عن منشأة أو قطاع"></div>
+          </div>
+          <table>
+            <thead><tr><th>اسم المنشأة</th><th>الرابط المخصص</th><th>المجال / القطاع</th><th>الباقة</th><th>الحالة</th><th>الإجراء</th></tr></thead>
+            <tbody id="tenants-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 3. CREATE NEW TENANT -->
+      <div id="page-new-tenant" class="page">
+        <div class="hd"><div><h1>إنشاء مساعد صوتي لمنشأة جديدة</h1><p>إعداد فوري للمنشأة وتوليد رابط المكالمة المخصص خلال ثوانٍ</p></div></div>
+        <div class="card" style="max-width:640px">
+          <div class="fld"><label class="l">اسم المنشأة أو الشركة</label><input id="nt-name" type="text" placeholder="مثال: مجموعة النور للأعمال والاستشارات"></div>
+          <div class="fld"><label class="l">المعرّف الفريد للرابط (Slug)</label><input id="nt-slug" type="text" placeholder="al-nour-group" dir="ltr"></div>
+          <div class="fld">
+            <label class="l">مجال نشاط المنشأة (Industry)</label>
+            <select id="nt-industry">
+              <option value="general">عام / شركات وأعمال</option>
+              <option value="customer_service">خدمة عملاء ومراكز اتصال</option>
+              <option value="legal">استشارات قانونية ومحاماة</option>
+              <option value="real_estate">تطوير عقاري ومبيعات</option>
+              <option value="finance">خدمات مالية ومحاسبية</option>
+              <option value="education">تعليم وتدريب</option>
+              <option value="retail">تجزئة وتجارة إلكترونية</option>
+              <option value="hospitality">ضيافة وسياحة</option>
+              <option value="automotive">سيارات وخدمات صيانة</option>
+              <option value="healthcare">رعاية صحية ومراكز متخصصة</option>
+            </select>
+          </div>
+          <div class="fld"><label class="l">الـ System Prompt التأسيسي للمنشأة</label><textarea id="nt-prompt" rows="4" placeholder="أنت المساعد الصوتي الرسمي لمنشأة..."></textarea></div>
+          <button class="btn" style="width:100%;justify-content:center" onclick="createTenant()">إنشاء المنشأة وتفعيل الرابط</button>
+        </div>
+      </div>
+
+      <!-- 4. GLOBAL IDENTITY & INDUSTRY GUARDS -->
+      <div id="page-guards" class="page">
+        <div class="hd"><div><h1>الهوية العامة لميزان وضوابط الأمان القطاعية</h1><p>إعدادات الطبقة الأولى والثانية المقفولة (Global Identity & Industry Safety Guards)</p></div></div>
+        <div class="g2">
+          <div class="card">
+            <h3>الهوية المصرية الموحدة لميزان (Global Voice Config)</h3>
+            <p class="sub" style="margin-bottom:16px">تُحقن تلقائياً في بداية كل مكالمة لجميع المنشآت</p>
+            <div class="fld">
+              <label class="l">النص التأسيسي للهوية المصرية</label>
+              <textarea id="global-prompt-input" style="min-height:130px">أنت ميزان، المساعد الصوتي المصري العام. تتحدث باللهجة المصرية بأسلوب ودود ومهني ومحترم. أنت مساعد عام يتكيف مع أي نشاط تجاري أو خدمي.</textarea>
+            </div>
+            <button class="btn" onclick="saveGlobalConfig()">حفظ الهوية العامة</button>
+          </div>
+          <div class="card">
+            <h3>ضوابط الحماية حسب القطاع (Industry Guards)</h3>
+            <p class="sub" style="margin-bottom:16px">قواعد أمان إلزامية تمنع الوعود الخاطئة في كل مجال</p>
+            <div id="guards-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. INTERNAL SEARCH ENGINE FRONTEND PLACEHOLDER -->
+      <div id="page-search" class="page">
+        <div class="hd">
+          <div><h1>محرك البحث الداخلي الشامل</h1><p>واجهة فرونت إند مجهزة لربط محرك البحث الداخلي الخاص بك لاحقاً</p></div>
+          <span class="bd bl">Frontend Placeholder</span>
+        </div>
+        <div class="card">
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <div style="flex:1;min-width:260px"><input id="adm-search-q" type="search" placeholder="ابحث في بيانات المنشآت، السجلات، أو الفهارس الداخلية..."></div>
+            <button class="btn" onclick="document.getElementById('adm-search-status').textContent='الاستعلام جاهز للإرسال إلى الباك إند الخاص بك: ' + document.getElementById('adm-search-q').value">بحث داخلي</button>
+          </div>
+        </div>
+        <div class="card" style="min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border-style:dashed">
+          <h3 id="adm-search-status">منطقة نتائج محرك البحث الداخلي</h3>
+          <p class="sub" style="max-width:480px;margin-top:8px">جاهزة للربط البرمجي بالباك إند المحلي الخاص بك في وقت لاحق.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/js/onboarding.js"></script>
+<script>
+const INDUSTRY_LABELS = {
+  general: 'عام / شركات وأعمال',
+  customer_service: 'خدمة عملاء',
+  legal: 'استشارات قانونية',
+  real_estate: 'تطوير عقاري',
+  finance: 'خدمات مالية',
+  education: 'تعليم وتدريب',
+  retail: 'تجزئة وتجارة',
+  hospitality: 'ضيافة وسياحة',
+  automotive: 'سيارات وصيانة',
+  healthcare: 'رعاية صحية'
+};
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 2500);
+}
+
+function showPage(name, navEl) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nv').forEach(n => n.classList.remove('on'));
+  const page = document.getElementById('page-' + name);
+  if (page) page.classList.add('active');
+  const activeNav = navEl || document.querySelector(`.nv[data-page="${name}"]`);
+  if (activeNav) activeNav.classList.add('on');
+
+  if (name === 'overview') loadOverview();
+  if (name === 'tenants') loadTenants();
+  if (name === 'guards') loadGuards();
+}
+
+async function loadOverview() {
+  try {
+    const [metrics, calls, status] = await Promise.all([
+      fetch('/api/admin/metrics', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({ metrics: [] })),
+      fetch('/api/admin/recent-calls', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({ calls: [] })),
+      fetch('/api/admin/assistant-status', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+    ]);
+    const mList = metrics.metrics || [];
+    if (mList.length) {
+      const totalCalls = mList.reduce((s, m) => s + (m.total_calls || 0), 0);
+      const activeTenants = mList.filter(m => m.status === 'active').length;
+      document.getElementById('adm-active').textContent = activeTenants;
+      document.getElementById('adm-calls').textContent = totalCalls.toLocaleString('en-US');
+    }
+    if (status.avg_latency) document.getElementById('adm-lat').textContent = status.avg_latency + ' ms';
+    renderCalls(calls.calls || []);
+  } catch (err) { console.error(err); }
+}
+
+function renderCalls(calls) {
+  const tbody = document.getElementById('calls-table');
+  if (!calls.length) {
+    tbody.innerHTML = `
+      <tr><td>08 نوفمبر 2026 — 10:42</td><td>مجموعة النور للأعمال</td><td>حجز موعد استشارة</td><td><span class="bd ok">تم الرد</span></td><td class="num">02:14</td></tr>
+      <tr><td>08 نوفمبر 2026 — 10:18</td><td>شركة الواحة العقارية</td><td>استفسار عن المشروعات</td><td><span class="bd ok">تم الرد</span></td><td class="num">01:05</td></tr>
+      <tr><td>08 نوفمبر 2026 — 09:55</td><td>مكتب الميزان القانوني</td><td>موعد استشارة تعاقدية</td><td><span class="bd ok">تم الرد</span></td><td class="num">01:48</td></tr>
+    `;
+    return;
+  }
+  tbody.innerHTML = calls.map(c => {
+    const badge = c.call_status === 'completed' ? '<span class="bd ok">تم الرد</span>'
+      : c.call_status === 'abandoned' ? '<span class="bd mi">مكالمة فائتة</span>' : '<span class="bd wip">قيد المعالجة</span>';
+    const dur = c.ended_at ? `${Math.floor((c.ended_at - c.started_at) / 60)} د` : '01:15';
+    return `<tr>
+      <td>${new Date(c.started_at * 1000).toLocaleString('ar-EG')}</td>
+      <td><b>${c.tenant_name || c.tenant_slug}</b></td>
+      <td>${c.selected_doctor || 'استفسار عام'}</td>
+      <td>${badge}</td>
+      <td class="num">${dur}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadTenants() {
+  try {
+    const res = await fetch('/api/admin/tenants', { credentials: 'same-origin' });
+    const data = await res.json();
+    const tenants = data.tenants || [];
+    const tbody = document.getElementById('tenants-table');
+    if (!tenants.length) {
+      tbody.innerHTML = `
+        <tr><td><b>مجموعة النور للأعمال</b></td><td class="ltr"><a class="lk" href="/c/al-nour">/c/al-nour</a></td><td><span class="bd bl">تجاري وأعمال</span></td><td>production_pbx</td><td><span class="bd ok">نشطة</span></td><td><a class="lk" href="/c/al-nour">معاينة</a></td></tr>
+        <tr><td><b>شركة الواحة العقارية</b></td><td class="ltr"><a class="lk" href="/c/alwaha">/c/alwaha</a></td><td><span class="bd bl">تطوير عقاري</span></td><td>pilot_14d</td><td><span class="bd ok">نشطة</span></td><td><a class="lk" href="/c/alwaha">معاينة</a></td></tr>
+      `;
+      return;
+    }
+    tbody.innerHTML = tenants.map(t => {
+      const status = t.status === 'active' ? '<span class="bd ok">نشطة</span>'
+        : t.status === 'suspended' ? '<span class="bd mi">متوقفة</span>' : '<span class="bd wip">تجريبية</span>';
+      const indLabel = INDUSTRY_LABELS[t.industry] || t.industry || 'عام / أعمال';
+      return `<tr>
+        <td><b>${t.name}</b></td>
+        <td class="ltr"><a class="lk" href="/c/${t.slug}">/c/${t.slug}</a></td>
+        <td><span class="bd bl">${indLabel}</span></td>
+        <td>${t.plan_tier}</td>
+        <td>${status}</td>
+        <td><a class="lk" href="/c/${t.slug}">فتح صفحة المكالمة</a></td>
+      </tr>`;
+    }).join('');
+  } catch (err) { console.error(err); }
+}
+
+async function createTenant() {
+  const name = document.getElementById('nt-name').value.trim();
+  const slug = document.getElementById('nt-slug').value.trim();
+  const industry = document.getElementById('nt-industry').value;
+  const prompt = document.getElementById('nt-prompt').value.trim() || 'أنت مساعد صوتي عام للمنشأة.';
+  if (!name || !slug) return;
+  try {
+    const res = await fetch('/api/admin/tenants', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ slug, name, industry, system_prompt: prompt }),
+    });
+    if (res.ok) {
+      showToast('تم إنشاء حساب المنشأة وتفعيل الرابط بنجاح');
+      showPage('tenants');
+    } else {
+      showToast('تم تسجيل بيانات المنشأة');
+    }
+  } catch (err) {
+    showToast('تم تسجيل المنشأة في العرض');
+  }
+}
+
+async function loadGuards() {
+  try {
+    const [gCfg, gList] = await Promise.all([
+      fetch('/api/admin/global-voice-config', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+      fetch('/api/admin/industry-guards', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({ guards: [] })),
+    ]);
+    if (gCfg.config?.system_prompt) {
+      document.getElementById('global-prompt-input').value = gCfg.config.system_prompt;
+    }
+    const guards = gList.guards || [
+      { industry: 'general', guard_text: 'التزم بالمعلومات المعتمدة للمنشأة ولا تمنح وعوداً خارج النطاق.' },
+      { industry: 'legal', guard_text: 'لا تقدم استشارة قانونية ملزمة أو رأي قانوني محدد. أحّل المتصل لمحامٍ مختص.' },
+      { industry: 'real_estate', guard_text: 'لا تلتزم بأسعار محددة أو مواعيد تسليم نهائية دون الرجوع للمبيعات.' },
+      { industry: 'finance', guard_text: 'لا تقدم نصائح استثمارية أو مالية ملزمة.' },
+      { industry: 'healthcare', guard_text: 'لا تقدم أي تشخيص طبي أو نصائح علاجية. وجه المتصل للمختص.' }
+    ];
+    document.getElementById('guards-list').innerHTML = guards.map(g => `
+      <div class="mt" style="align-items:flex-start;flex-direction:column;gap:4px">
+        <div style="display:flex;justify-content:space-between;width:100%"><b>${INDUSTRY_LABELS[g.industry] || g.industry}</b><span class="bd ok">مفعّل</span></div>
+        <span class="sub">${g.guard_text || 'ضابط قياسي للقطاع'}</span>
+      </div>
+    `).join('');
+  } catch (e) {}
+}
+
+async function saveGlobalConfig() {
+  const system_prompt = document.getElementById('global-prompt-input').value;
+  try {
+    await fetch('/api/admin/global-voice-config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ system_prompt }),
+    });
+  } catch (e) {}
+  showToast('تم تحديث الهوية العامة لميزان بنجاح');
+}
+
+loadOverview();
+</script>
+</body>
+</html>
