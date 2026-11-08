@@ -791,33 +791,48 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   <script src="/js/onboarding.js"></script>
   <script>
     const TENANT_SLUG="${tenant.slug}",SESSION_ID="${sessionId}",WS_BASE="${wsBase}";
-    let ws=null,audioCtx=null,stream=null,calling=false,muted=false,timerInt=null,startT=null;
+    let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,timerInt=null,startT=null,callAttempt=0;
     async function toggleCall(){calling?endCall():startCall()}
     async function startCall(){
+      const attempt=++callAttempt;
       const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
-      b.classList.add('connecting');ow.classList.add('connecting');s.textContent='جاري الاتصال...';s.className='st connecting';
-      ws=new WebSocket(\`\${WS_BASE}/agents/mizan-voice-agent/\${TENANT_SLUG}?session_id=\${SESSION_ID}\`);
-      ws.binaryType='arraybuffer';
-      ws.onopen=async()=>{
-        calling=true;b.classList.remove('connecting');b.classList.add('active');ow.classList.remove('connecting');ow.classList.add('active');
-        s.textContent='متصل — تحدث الآن';s.className='st';c.classList.add('visible');w.classList.remove('idle');
-        startT=Date.now();timerInt=setInterval(()=>{const e=Math.floor((Date.now()-startT)/1000);document.getElementById('timer').textContent=String(Math.floor(e/60)).padStart(2,'0')+':'+String(e%60).padStart(2,'0')},1000);
-        try{
-          stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:16000}});
-          audioCtx=new AudioContext({sampleRate:16000});
-          await audioCtx.audioWorklet.addModule('/pcm-processor.js');
-          const src=audioCtx.createMediaStreamSource(stream);
-          const node=new AudioWorkletNode(audioCtx,'pcm-processor');
-          src.connect(node);node.connect(audioCtx.destination);
-          node.port.onmessage=e=>{if(ws&&ws.readyState===1&&!muted)ws.send(e.data)};
-        }catch(err){console.error('Audio init failed:',err);endCall()}
-      };
-      ws.onmessage=e=>{if(e.data instanceof ArrayBuffer)play(e.data);else{try{const m=JSON.parse(e.data);if(m.type==='transcript')addTurn(m.speaker,m.text)}catch{}}};
-      ws.onclose=()=>endCall();ws.onerror=()=>{document.getElementById('status').textContent='خطأ في الاتصال';document.getElementById('status').className='st error';endCall()}
+      b.classList.add('connecting');ow.classList.add('connecting');s.textContent='يرجى السماح باستخدام الميكروفون...';s.className='st connecting';
+      try{
+        if(!navigator.mediaDevices?.getUserMedia)throw new Error('المتصفح لا يدعم الوصول إلى الميكروفون أو أن الصفحة ليست عبر HTTPS');
+        const acquiredStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:16000}});
+        if(attempt!==callAttempt){acquiredStream.getTracks().forEach(t=>t.stop());return}
+        stream=acquiredStream;
+        const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+        if(!AudioContextClass)throw new Error('المتصفح لا يدعم Web Audio API');
+        audioCtx=new AudioContextClass({sampleRate:16000});
+        await audioCtx.resume();
+        await audioCtx.audioWorklet.addModule('/pcm-processor.js');
+        if(attempt!==callAttempt)return;
+        audioSource=audioCtx.createMediaStreamSource(stream);
+        audioNode=new AudioWorkletNode(audioCtx,'pcm-processor');
+        audioSource.connect(audioNode);audioNode.connect(audioCtx.destination);
+        audioNode.port.onmessage=e=>{if(attempt===callAttempt&&ws&&ws.readyState===WebSocket.OPEN&&!muted)ws.send(e.data)};
+        s.textContent='جاري الاتصال بالمساعد...';
+        const socket=new WebSocket(`${WS_BASE}/agents/mizan-voice-agent/${TENANT_SLUG}?session_id=${SESSION_ID}`);
+        ws=socket;
+        socket.binaryType='arraybuffer';
+        socket.onopen=()=>{
+          if(attempt!==callAttempt){socket.close();return}
+          calling=true;b.classList.remove('connecting');b.classList.add('active');ow.classList.remove('connecting');ow.classList.add('active');
+          s.textContent='متصل — تحدث الآن';s.className='st';c.classList.add('visible');w.classList.remove('idle');
+          startT=Date.now();timerInt=setInterval(()=>{const e=Math.floor((Date.now()-startT)/1000);document.getElementById('timer').textContent=String(Math.floor(e/60)).padStart(2,'0')+':'+String(e%60).padStart(2,'0')},1000);
+        };
+        socket.onmessage=e=>{if(e.data instanceof ArrayBuffer)play(e.data);else{try{const m=JSON.parse(e.data);if(m.type==='transcript')addTurn(m.speaker,m.text)}catch{}}};
+        socket.onclose=()=>{if(attempt===callAttempt)endCall()};
+        socket.onerror=()=>{if(attempt===callAttempt){s.textContent='خطأ في الاتصال';s.className='st error';endCall()}};
+      }catch(err){
+        console.error('Call initialization failed:',err);
+        if(attempt===callAttempt){endCall();s.textContent=err.name==='NotAllowedError'?'لم يتم السماح باستخدام الميكروفون':err.message||'تعذر تهيئة الصوت';s.className='st error'}
+      }
     }
-    function endCall(){calling=false;const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
+    function endCall(){callAttempt++;calling=false;const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
       b.classList.remove('active','connecting');ow.classList.remove('active','connecting');s.textContent='انتهت المكالمة — جاهز لاتصال جديد';s.className='st';c.classList.remove('visible');w.classList.add('idle');
-      if(timerInt){clearInterval(timerInt);timerInt=null}if(ws){ws.close();ws=null}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}if(audioCtx){audioCtx.close();audioCtx=null}}
+      if(timerInt){clearInterval(timerInt);timerInt=null}if(ws){const oldWs=ws;ws=null;if(oldWs.readyState===WebSocket.CONNECTING||oldWs.readyState===WebSocket.OPEN)oldWs.close()}if(audioNode){audioNode.disconnect();audioNode=null}if(audioSource){audioSource.disconnect();audioSource=null}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}if(audioCtx){const oldCtx=audioCtx;audioCtx=null;oldCtx.close().catch(()=>{})}}
     function toggleMute(){muted=!muted;const b=document.getElementById('muteBtn'),l=document.getElementById('muteLabel');muted?(b.classList.add('muted'),l.textContent='مكتوم'):(b.classList.remove('muted'),l.textContent='كتم')}
     function addTurn(sp,txt){const t=document.getElementById('transcript'),d=document.createElement('div');d.className='turn '+sp;
       const l=document.createElement('div');l.className='turn-label';l.textContent=sp==='caller'?'المتصل':'المساعد';
