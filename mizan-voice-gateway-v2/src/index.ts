@@ -813,17 +813,18 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         audioSource.connect(audioNode);audioNode.connect(audioCtx.destination);
         audioNode.port.onmessage=e=>{if(attempt===callAttempt&&ws&&ws.readyState===WebSocket.OPEN&&!muted)ws.send(e.data)};
         s.textContent='جاري الاتصال بالمساعد...';
-        ws=new WebSocket(`${WS_BASE}/agents/mizan-voice-agent/${TENANT_SLUG}?session_id=${SESSION_ID}`);
-        ws.binaryType='arraybuffer';
-        ws.onopen=()=>{
-          if(attempt!==callAttempt){ws.close();return}
+        const socket=new WebSocket(`${WS_BASE}/agents/mizan-voice-agent/${TENANT_SLUG}?session_id=${SESSION_ID}`);
+        ws=socket;
+        socket.binaryType='arraybuffer';
+        socket.onopen=()=>{
+          if(attempt!==callAttempt){socket.close();return}
           calling=true;b.classList.remove('connecting');b.classList.add('active');ow.classList.remove('connecting');ow.classList.add('active');
           s.textContent='متصل — تحدث الآن';s.className='st';c.classList.add('visible');w.classList.remove('idle');
           startT=Date.now();timerInt=setInterval(()=>{const e=Math.floor((Date.now()-startT)/1000);document.getElementById('timer').textContent=String(Math.floor(e/60)).padStart(2,'0')+':'+String(e%60).padStart(2,'0')},1000);
         };
-        ws.onmessage=e=>{if(e.data instanceof ArrayBuffer)play(e.data);else{try{const m=JSON.parse(e.data);if(m.type==='transcript')addTurn(m.speaker,m.text)}catch{}}};
-        ws.onclose=()=>{if(attempt===callAttempt)endCall()};
-        ws.onerror=()=>{if(attempt===callAttempt){s.textContent='خطأ في الاتصال';s.className='st error';endCall()}};
+        socket.onmessage=e=>{if(e.data instanceof ArrayBuffer)play(e.data);else{try{const m=JSON.parse(e.data);if(m.type==='transcript')addTurn(m.speaker,m.text)}catch{}}};
+        socket.onclose=()=>{if(attempt===callAttempt)endCall()};
+        socket.onerror=()=>{if(attempt===callAttempt){s.textContent='خطأ في الاتصال';s.className='st error';endCall()}};
       }catch(err){
         console.error('Call initialization failed:',err);
         if(attempt===callAttempt){endCall();s.textContent=err.name==='NotAllowedError'?'لم يتم السماح باستخدام الميكروفون':err.message||'تعذر تهيئة الصوت';s.className='st error'}
