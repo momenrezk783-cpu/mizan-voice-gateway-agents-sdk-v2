@@ -799,8 +799,9 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
       b.classList.add('connecting');ow.classList.add('connecting');s.textContent='يرجى السماح باستخدام الميكروفون...';s.className='st connecting';
       try{
         if(!navigator.mediaDevices?.getUserMedia)throw new Error('المتصفح لا يدعم الوصول إلى الميكروفون أو أن الصفحة ليست عبر HTTPS');
-        stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:16000}});
-        if(attempt!==callAttempt)return;
+        const acquiredStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:16000}});
+        if(attempt!==callAttempt){acquiredStream.getTracks().forEach(t=>t.stop());return}
+        stream=acquiredStream;
         const AudioContextClass=window.AudioContext||window.webkitAudioContext;
         if(!AudioContextClass)throw new Error('المتصفح لا يدعم Web Audio API');
         audioCtx=new AudioContextClass({sampleRate:16000});
