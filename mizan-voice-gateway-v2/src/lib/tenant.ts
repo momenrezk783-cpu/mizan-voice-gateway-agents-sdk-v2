@@ -26,7 +26,7 @@ export interface TenantVoiceConfig {
   ttl_seconds: number;
 }
 
-const KV_TTL = 30; // seconds — matches prompt cache TTL
+const KV_TTL = 60; // seconds — Cloudflare KV minimum expirationTtl is 60s
 
 /**
  * Resolve a tenant by slug. Checks KV first, falls back to D1.
