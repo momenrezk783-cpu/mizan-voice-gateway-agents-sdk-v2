@@ -1,0 +1,114 @@
+# ============================================================================
+# Mizan Voice Gateway — Agents SDK Architecture (v2)
+# ============================================================================
+# Built on Cloudflare Agents SDK with withVoice mixin.
+# Single unified worker — handles gateway + voice agent + portal + admin.
+#
+# Key changes from v1:
+#   - Agents SDK replaces manual DO + WebSocket + STT/TTS management
+#   - Workers AI powers STT/TTS (no external Deepgram/ElevenLabs API keys)
+#   - WebSocket Hibernation API (cost-efficient, DOs sleep when idle)
+#   - Queues for background work (pilot expiry, usage aggregation)
+#   - SQLite-backed DOs for persistent conversation state
+# ============================================================================
+
+name = "mizan-voice-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-11-08"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+VOICE_WS_BASE = "wss://voice.mizanconsult.com"
+# LLM models on Workers AI (no external API keys)
+PRIMARY_LLM = "@cf/daily-co/phonellm-mini-alpha-2"
+FALLBACK_LLM = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
+
+# Workers AI — STT (Deepgram Flux), TTS (Aura-1), LLM (PhoneLLM Mini)
+[ai]
+binding = "AI"
+
+# D1 — Multi-tenant database (using actual deployed ID)
+[[d1_databases]]
+binding = "DB"
+database_name = "mizan-db"
+database_id = "04efb171-e903-4f16-b9c2-9ab7a0f7c9a6"
+
+# KV — Tenant config cache (hot-read, 30s TTL)
+# Create: npx wrangler kv namespace create TENANT_CONFIG
+[[kv_namespaces]]
+binding = "TENANT_CONFIG"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# R2 — Call audio recordings
+# Create: npx wrangler r2 bucket create mizan-call-records
+[[r2_buckets]]
+binding = "AUDIO_BUCKET"
+bucket_name = "mizan-call-records"
+
+# Durable Object — Voice Agent (SQLite-backed for conversation persistence)
+# MIGRATION: Current class is MizanVoiceAgentV2 (tag v3).
+# This creates a NEW class with SQLite storage.
+# Old class state is NOT compatible — active calls will drop during deploy.
+[[durable_objects.bindings]]
+name = "MIZAN_VOICE_AGENT"
+class_name = "MizanVoiceAgent"
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["MizanVoiceAgent"]
+deleted_classes = ["MizanVoiceAgentV2"]
+
+# Queues — Background work (pilot expiry, usage aggregation, call recording)
+# Create: npx wrangler queues create mizan-background
+[[queues.producers]]
+binding = "BACKGROUND_QUEUE"
+queue = "mizan-background"
+
+[[queues.consumers]]
+binding = "BACKGROUND_QUEUE"
+queue = "mizan-background"
+max_batch_size = 10
+max_batch_timeout = 5
+
+# Analytics Engine — Per-tenant voice latency metrics
+[[analytics_engine_datasets]]
+binding = "VOICE_METRICS"
+dataset = "mizan_voice_latency"
+
+# Static Assets — Portal, admin dashboard, public voice page
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# Scheduled — Pilot expiry check, stale session cleanup
+[triggers]
+crons = ["*/5 * * * *"]
+
+# Observability — Logs + traces + issues
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+persist = true
+head_sampling_rate = 1
+
+[observability.issues]
+enabled = true
+
+# Secrets (inject via `wrangler secret put`):
+#   SESSION_SECRET       — HMAC-SHA256 session token signing
+#   CONTACT_ENC_KEY      — 256-bit AES-GCM key for patient PII
+#   ADMIN_PASSKEY_HASH   — Super Admin passkey gate
+#
+# NOTE: No ELEVENLABS_API_KEY or DEEPGRAM_API_KEY needed —
+# Workers AI handles STT/TTS on Cloudflare's edge GPUs.

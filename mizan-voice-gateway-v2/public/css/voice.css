@@ -1,0 +1,412 @@
+/* ============================================================================
+   Mizan Voice Gateway — Modern Voice Page (2026)
+   Glassmorphic dark UI · animated voice orb · aurora background
+   Per-tenant accent via CSS custom properties
+   ============================================================================ */
+
+:root {
+  --mz-accent: #6366f1;
+  --mz-accent-2: #ec4899;
+  --mz-accent-glow: rgba(99, 102, 241, 0.4);
+  --mz-surface: rgba(255, 255, 255, 0.06);
+  --mz-surface-hover: rgba(255, 255, 255, 0.1);
+  --mz-border: rgba(255, 255, 255, 0.12);
+  --mz-text: #f8fafc;
+  --mz-text-muted: rgba(248, 250, 252, 0.55);
+  --mz-caller: #818cf8;
+  --mz-agent: #34d399;
+  --mz-danger: #f43f5e;
+  --mz-font: 'Tajawal', 'Inter', system-ui, sans-serif;
+  --mz-radius: 28px;
+}
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { height: 100%; -webkit-tap-highlight-color: transparent; }
+
+body {
+  font-family: var(--mz-font);
+  background: #06060a;
+  color: var(--mz-text);
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  overflow: hidden;
+  position: relative;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Aurora Background ---- */
+.aurora {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.5;
+  animation: float 18s ease-in-out infinite;
+}
+
+.aurora-blob:nth-child(1) {
+  width: 480px; height: 480px;
+  background: var(--mz-accent);
+  top: -10%; right: -5%;
+  animation-delay: 0s;
+}
+
+.aurora-blob:nth-child(2) {
+  width: 400px; height: 400px;
+  background: var(--mz-accent-2);
+  bottom: -10%; left: -5%;
+  animation-delay: -6s;
+}
+
+.aurora-blob:nth-child(3) {
+  width: 300px; height: 300px;
+  background: #0ea5e9;
+  top: 40%; left: 50%;
+  opacity: 0.3;
+  animation-delay: -12s;
+}
+
+@keyframes float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(40px, -50px) scale(1.1); }
+  66%      { transform: translate(-30px, 40px) scale(0.95); }
+}
+
+/* ---- Noise Texture Overlay ---- */
+.aurora::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  mix-blend-mode: overlay;
+}
+
+/* ---- Glass Card ---- */
+.voice-card {
+  position: relative;
+  z-index: 1;
+  background: var(--mz-surface);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid var(--mz-border);
+  border-radius: var(--mz-radius);
+  width: 100%;
+  max-width: 420px;
+  padding: 2.75rem 1.75rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 20px 60px rgba(0, 0, 0, 0.5),
+    0 0 100px var(--mz-accent-glow);
+}
+
+/* ---- Clinic Header ---- */
+.clinic-header {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.clinic-logo {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  object-fit: cover;
+  border: 1px solid var(--mz-border);
+}
+
+.clinic-name {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--mz-text), var(--mz-text-muted));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.clinic-tagline {
+  font-size: 0.8125rem;
+  color: var(--mz-text-muted);
+  font-weight: 400;
+}
+
+/* ---- Voice Orb ---- */
+.orb-wrapper {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0.5rem 0;
+}
+
+.orb {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--mz-accent), var(--mz-accent-2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: none;
+  color: white;
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 0 40px var(--mz-accent-glow), inset 0 0 20px rgba(255, 255, 255, 0.2);
+  position: relative;
+  z-index: 2;
+  animation: breathe 4s ease-in-out infinite;
+}
+
+.orb:hover { transform: scale(1.08); }
+.orb:active { transform: scale(0.95); }
+
+.orb svg { width: 36px; height: 36px; }
+
+.orb.active {
+  background: linear-gradient(135deg, var(--mz-danger), #fb7185);
+  box-shadow: 0 0 50px rgba(244, 63, 94, 0.4), inset 0 0 20px rgba(255, 255, 255, 0.2);
+  animation: none;
+}
+
+.orb.connecting { animation: pulse-fast 1s ease-in-out infinite; }
+
+/* Orb rings */
+.orb-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--mz-accent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.orb-wrapper.connecting .orb-ring,
+.orb-wrapper.active .orb-ring {
+  animation: ring-expand 2s ease-out infinite;
+}
+
+.orb-wrapper.active .orb-ring { border-color: var(--mz-danger); }
+
+.orb-ring:nth-child(2) { animation-delay: 0.6s !important; }
+.orb-ring:nth-child(3) { animation-delay: 1.2s !important; }
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 40px var(--mz-accent-glow), inset 0 0 20px rgba(255, 255, 255, 0.2); }
+  50%      { transform: scale(1.05); box-shadow: 0 0 60px var(--mz-accent-glow), inset 0 0 25px rgba(255, 255, 255, 0.3); }
+}
+
+@keyframes pulse-fast {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.12); }
+}
+
+@keyframes ring-expand {
+  0%   { transform: scale(0.65); opacity: 0.6; }
+  100% { transform: scale(1.6);  opacity: 0;   }
+}
+
+/* ---- Audio Visualizer ---- */
+.visualizer {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 28px;
+  margin-top: -0.5rem;
+}
+
+.visualizer.visible { display: flex; }
+
+.viz-bar {
+  width: 4px;
+  border-radius: 2px;
+  background: var(--mz-accent);
+  animation: viz-bounce 0.8s ease-in-out infinite;
+}
+
+.viz-bar:nth-child(1) { animation-delay: 0s;   height: 8px; }
+.viz-bar:nth-child(2) { animation-delay: 0.1s; height: 16px; }
+.viz-bar:nth-child(3) { animation-delay: 0.2s; height: 24px; }
+.viz-bar:nth-child(4) { animation-delay: 0.15s; height: 16px; }
+.viz-bar:nth-child(5) { animation-delay: 0.05s; height: 8px; }
+
+@keyframes viz-bounce {
+  0%, 100% { transform: scaleY(0.4); }
+  50%      { transform: scaleY(1); }
+}
+
+/* ---- Status ---- */
+.call-status {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--mz-text-muted);
+  text-align: center;
+  min-height: 1.25rem;
+  transition: color 0.3s ease;
+  letter-spacing: 0.01em;
+}
+
+.call-status.connected { color: var(--mz-agent); }
+.call-status.error     { color: var(--mz-danger); }
+
+/* ---- Call Timer + Mute Row ---- */
+.call-controls {
+  display: none;
+  align-items: center;
+  gap: 1rem;
+  margin-top: -0.25rem;
+}
+
+.call-controls.visible { display: flex; }
+
+.call-timer {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--mz-text-muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+
+.mute-button {
+  background: var(--mz-surface);
+  border: 1px solid var(--mz-border);
+  border-radius: 10px;
+  padding: 0.375rem 0.875rem;
+  font-family: var(--mz-font);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--mz-text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.mute-button:hover { background: var(--mz-surface-hover); color: var(--mz-text); }
+.mute-button.muted { color: #fbbf24; border-color: rgba(251, 191, 36, 0.3); }
+
+/* ---- Transcript ---- */
+.transcript-container {
+  width: 100%;
+  display: none;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.transcript-container.visible { display: flex; }
+
+.transcript-header {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--mz-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding-bottom: 0.25rem;
+}
+
+.transcript {
+  width: 100%;
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.15) transparent;
+}
+
+.transcript::-webkit-scrollbar { width: 4px; }
+.transcript::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+.turn {
+  padding: 0.625rem 0.875rem;
+  border-radius: 16px;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  max-width: 85%;
+  animation: turn-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border: 1px solid var(--mz-border);
+}
+
+@keyframes turn-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.turn.caller {
+  align-self: flex-start;
+  background: rgba(129, 140, 248, 0.1);
+  color: var(--mz-caller);
+  border-bottom-right-radius: 4px;
+}
+
+.turn.agent {
+  align-self: flex-end;
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--mz-agent);
+  border-bottom-left-radius: 4px;
+}
+
+.turn-label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  opacity: 0.5;
+  margin-bottom: 0.1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ---- Footer ---- */
+.voice-footer {
+  font-size: 0.6875rem;
+  color: var(--mz-text-muted);
+  text-align: center;
+  opacity: 0.5;
+  margin-top: 0.25rem;
+}
+
+.voice-footer a {
+  color: var(--mz-accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 480px) {
+  .voice-card { padding: 2rem 1.25rem 1.5rem; border-radius: 24px; }
+  .clinic-name { font-size: 1.25rem; }
+  .orb { width: 88px; height: 88px; }
+  .orb svg { width: 32px; height: 32px; }
+  .transcript { max-height: 160px; }
+}
+
+/* ---- Reduced Motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
