@@ -66,7 +66,7 @@ export async function getGlobalVoiceConfig(
 // ---------------------------------------------------------------------------
 
 export async function getIndustryGuard(
-  industry: string,
+  industry: string | null | undefined,
   env: { DB: D1Database; TENANT_CONFIG: KVNamespace }
 ): Promise<string> {
   // Older cached tenant records may not include industry. Never pass undefined to D1.
