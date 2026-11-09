@@ -1,24 +1,30 @@
-name: Deploy to Cloudflare
+name: Deploy Mizan HQ visual preview
 
 on:
   push:
     branches:
-      - main
+      - redesign/mizan-hq-experience-2026-11
+    paths:
+      - "mizan-voice-gateway-v2/public/**"
+      - "mizan-voice-gateway-v2/wrangler.preview.toml"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  deploy:
+  deploy-preview:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - name: Checkout
+      - name: Checkout redesign branch
         uses: actions/checkout@v4
+        with:
+          ref: redesign/mizan-hq-experience-2026-11
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -29,6 +35,6 @@ jobs:
         working-directory: ./mizan-voice-gateway-v2
         run: npm ci
 
-      - name: Deploy to Cloudflare
+      - name: Deploy isolated static preview
         working-directory: ./mizan-voice-gateway-v2
-        run: npx wrangler deploy
+        run: npx wrangler deploy --config wrangler.preview.toml
