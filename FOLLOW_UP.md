@@ -1,7 +1,7 @@
 # FOLLOW_UP
 
-On branch `fix/queue-and-manual-voice-pipeline`, corrected the Cloudflare Queue consumer to iterate `batch.messages` and acknowledge successful messages, with retries retained for failures.
+On branch `fix/voice-language-routing`, based on `main` after PR #10 was merged, updated Whisper to auto-detect the caller's language and made the LLM answer in Egyptian Arabic by default or English when English is detected.
 
-Replaced `withVoice` in `src/agent.ts` with the Agents SDK `Agent` base class and an explicit WebSocket audio pipeline: Float32 frames are buffered, converted to WAV for Workers AI Whisper STT, passed through the existing primary/fallback LLM, then synthesized with Deepgram Aura-1 and returned as MP3; the AudioWorklet now emits Float32 frames and end-of-utterance markers.
+Replaced the ambiguous Aura-1 speech output with Cloudflare `xai/grok-tts`, selecting `ar-EG` or `en` and forwarding the returned MP3 audio to the browser.
 
-Static source review is complete, but a local type/build test and browser/device voice test are still pending because the connected Shellway device is offline; changes are isolated in this branch and have not been merged or deployed.
+Source review confirms the forced-Arabic STT setting and Aura-1 call are gone; local type/build and real browser/device audio tests remain pending, and this branch has not been merged or deployed.
