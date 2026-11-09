@@ -741,7 +741,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://mizanconsult.com/c/${tenant.slug}">
   <meta property="og:locale" content="ar_EG">
-  <meta property="og:site_name" content="ميزان كونسلت">
+  <meta property="og:site_name" content="Mizan HQ">
   ${tenant.logo_url ? `<meta property="og:image" content="${tenant.logo_url}">` : ''}
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="${tenant.name} — مساعد صوتي">
@@ -759,8 +759,8 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   <div class="vp" id="orbWrapper">
     <div class="top-row">
       <a href="/" class="lg">
-        <div class="lm"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0zM8 21h8"></path></svg></div>
-        ميزان كونسلت
+        <div class="lm"><img src="/images/mizan-hq-logo.webp" alt="Mizan HQ" style="width:40px;height:40px;object-fit:contain;background:#fff;border-radius:8px"></div>
+        ميزان هيد كوارتر
       </a>
       <button type="button" class="mz-tour-trigger-btn" onclick="MizanOnboarding.start('call')">🎯 جولة تعريفية</button>
     </div>
@@ -786,7 +786,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
       <div>اسأل عن مواعيد العمل، أو الخدمات المتاحة، أو احجز ميعاد، أو اعرف مكان الفروع.</div>
       <div class="transcript" id="transcript"></div>
     </div>
-    <div class="ft">بدعم من <a href="https://mizanconsult.com">ميزان كونسلت</a></div>
+    <div class="ft">بدعم من <a href="https://mizanconsult.com">ميزان هيد كوارتر</a></div>
   </div>
   <script src="/js/onboarding.js"></script>
   <script>
