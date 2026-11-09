@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  color-scheme: light;
+  --mizan-navy: #082840;
+  --mizan-navy-2: #123b53;
+  --mizan-cream: #F7F4EC;
+  --mizan-surface: #FFFEFA;
+  --mizan-teal: #4C9695;
+  --mizan-teal-deep: #327777;
+  --mizan-teal-soft: #DCE9E7;
+  --mizan-gold: #C49B62;
+  --mizan-ink: #17384C;
+  --mizan-muted: #647783;
+  --mizan-line: #E4E8E2;
+  --mizan-success: #26765E;
+  --mizan-warning: #9A6B2D;
+  --mizan-danger: #B84D48;
+  --font-ar: 'IBM Plex Sans Arabic', Tahoma, sans-serif;
+  --font-en: Inter, Arial, sans-serif;
+  --shadow-sm: 0 2px 8px rgba(8,40,64,.05);
+  --shadow-md: 0 12px 32px rgba(8,40,64,.09);
+  --shadow-lg: 0 24px 60px rgba(8,40,64,.14);
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+}
+
+html { scroll-behavior: smooth; }
+body { font-family: var(--font-ar); color: var(--mizan-ink); }
+button, input, select, textarea { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 3px solid rgba(76,150,149,.55); outline-offset: 3px; }
+::selection { background: var(--mizan-teal-soft); color: var(--mizan-navy); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
