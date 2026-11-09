@@ -735,7 +735,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#0F2D52">
+  <meta name="theme-color" content="#082840">
   <title>${tenant.name} — المساعد الصوتي المباشر</title>
   <meta property="og:title" content="${tenant.name} — مساعد صوتي">
   <meta property="og:description" content="تحدث الآن مع المساعد الصوتي لـ ${tenant.name}. احجز موعدك أو استفسر عن خدماتنا فوراً.">
@@ -747,6 +747,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="${tenant.name} — مساعد صوتي">
   <meta name="twitter:description" content="تحدث الآن مع المساعد الصوتي لـ ${tenant.name}.">
+  <link rel="stylesheet" href="/css/brand.css">
   <link rel="stylesheet" href="/css/voice.css">
   <style>
     :root {
