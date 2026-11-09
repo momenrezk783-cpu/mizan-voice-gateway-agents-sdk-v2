@@ -66,7 +66,7 @@ export function extractCallerTitleAndName(
 
   const titles = TITLES.join("|");
   const match = text.match(new RegExp(
-    String.raw`(?:^|\\s)(?:أنا|انا|معاك|معاكي|كلامك مع|بتكلمك)\\s+(?:ال)?(${titles})(?:\\s+([\\u0621-\\u064A]{2,18}))?`,
+    String.raw`(?:^|\s)(?:أنا|انا|معاك|معاكي|كلامك مع|بتكلمك)\s+(?:ال)?(${titles})(?:\s+([\u0621-\u064A]{2,18}))?`,
     "u"
   ));
   if (match) {
@@ -85,7 +85,7 @@ export function resolvePersonAddressPolicy(context: PersonTitleContext = {}): {
   canonicalTitle: string | null;
   firstName: string | null;
 } {
-  const firstName = String(context.callerName ?? "").trim().split(/\\s+/)[0] || null;
+  const firstName = String(context.callerName ?? "").trim().split(/\s+/)[0] || null;
   const title = canonicalTitle(context.callerTitle);
   const gender = inferGender(title, context.callerGender ?? "unknown");
   const preferredAddress = context.role === "manager"
@@ -103,11 +103,11 @@ export function resolvePersonAddressPolicy(context: PersonTitleContext = {}): {
 }
 
 const BANNED_PATTERNS = [
-  /يا\\s*فندم/gu, /يا\\s*أفندم/gu, /يا\\s*افندم/gu,
-  /(?:^|[\\s،,.!؟])(?:فندم|أفندم|افندم)(?=$|[\\s،,.!؟])/gu,
+  /يا\s*فندم/gu, /يا\s*أفندم/gu, /يا\s*افندم/gu,
+  /(?:^|[\s،,.!؟])(?:فندم|أفندم|افندم)(?=$|[\s،,.!؟])/gu,
   /حضرتك/gu, /سيادتك/gu, /سعادتك/gu,
-  /يا\\s*(?:باشا|بيه|بك|هانم|معلم|زعيم|غالي|ريس)(?=$|[\\s،,.!؟])/gu,
-  /طال\\s*عمرك/gu, /تحت\\s*أمرك/gu, /أؤمرني/gu
+  /يا\s*(?:باشا|بيه|بك|هانم|معلم|زعيم|غالي|ريس)(?=$|[\s،,.!؟])/gu,
+  /طال\s*عمرك/gu, /تحت\s*أمرك/gu, /أؤمرني/gu
 ];
 
 const NON_EGYPTIAN_MARKERS = [
@@ -144,13 +144,13 @@ export function sanitizeForSpeech(raw: string, context: PersonTitleContext = {})
   const policy = resolvePersonAddressPolicy(context);
   const feminine = policy.gender === "female";
   value = value
-    .replace(/\\*([^*]*)\\*/gu, "$1")
-    .replace(/\\[[^\\]]*\\]/gu, "")
-    .replace(/\\([^)]*(?:ضحك|تنهد|صمت|نبرة|بهدوء|بحماس|pause|laugh|sigh)[^)]*\\)/giu, "")
+    .replace(/\*([^*]*)\*/gu, "$1")
+    .replace(/\[[^\]]*\]/gu, "")
+    .replace(/\([^)]*(?:ضحك|تنهد|صمت|نبرة|بهدوء|بحماس|pause|laugh|sigh)[^)]*\)/giu, "")
     .replace(/[#_`~>]/gu, "");
 
   let usedPreferredAddress = false;
-  value = value.replace(/يا\\s*(?:فندم|أفندم|افندم)([،,]?)/gu, (_match, punctuation: string) => {
+  value = value.replace(/يا\s*(?:فندم|أفندم|افندم)([،,]?)/gu, (_match, punctuation: string) => {
     if (policy.firstName && !usedPreferredAddress) {
       usedPreferredAddress = true;
       return policy.preferredAddress + (punctuation || "");
@@ -158,14 +158,14 @@ export function sanitizeForSpeech(raw: string, context: PersonTitleContext = {})
     return "";
   });
   value = value
-    .replace(/مع\\s+حضرتك/gu, feminine ? "معاكي" : "معاك")
+    .replace(/مع\s+حضرتك/gu, feminine ? "معاكي" : "معاك")
     .replace(/لحضرتك/gu, feminine ? "ليكي" : "ليك")
     .replace(/بحضرتك/gu, feminine ? "بيكي" : "بيك")
-    .replace(/عن\\s+حضرتك/gu, "عنك")
-    .replace(/من\\s+حضرتك/gu, "منك")
+    .replace(/عن\s+حضرتك/gu, "عنك")
+    .replace(/من\s+حضرتك/gu, "منك")
     .replace(/حضرتك/gu, feminine ? "إنتي" : "إنت")
     .replace(/سيادتك|سعادتك/gu, feminine ? "إنتي" : "إنت")
-    .replace(/(?:^|[\\s،,.!؟])(?:فندم|أفندم|افندم)\\s*[،,]?/gu, " ");
+    .replace(/(?:^|[\s،,.!؟])(?:فندم|أفندم|افندم)\s*[،,]?/gu, " ");
 
   const vocative = new RegExp(`يا\\s+(دكتورة|دكتوره|دكتور|باشمهندسة|باشمهندسه|باشمهندس|مهندسة|مهندسه|مهندس|أستاذة|أستاذه|استاذة|استاذه|أستاذ|استاذ|مستر|كابتن|شيخ)(?:\\s+([\\u0621-\\u064A]{2,18}))?`, "gu");
   value = value.replace(vocative, (_match, rawTitle: string, rawName?: string) => {
