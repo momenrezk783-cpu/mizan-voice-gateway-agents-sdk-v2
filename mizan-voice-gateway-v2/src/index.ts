@@ -725,8 +725,9 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
     accent2: shadeColor(accent, 40),
     glow: hexToRgba(accent, 0.3),
   };
-  const avatarContent = tenant.logo_url
-    ? `<img src="${tenant.logo_url}" alt="${tenant.name}">`
+  const logoUrl = tenant.logo_url ? new URL(tenant.logo_url, request.url).toString() : null;
+  const avatarContent = logoUrl
+    ? `<img src="${logoUrl}" alt="${tenant.name}">`
     : `<svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0zM8 21h8"></path></svg>`;
 
   const html = `<!DOCTYPE html>
@@ -742,7 +743,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   <meta property="og:url" content="https://mizanconsult.com/c/${tenant.slug}">
   <meta property="og:locale" content="ar_EG">
   <meta property="og:site_name" content="Mizan HQ">
-  ${tenant.logo_url ? `<meta property="og:image" content="${tenant.logo_url}">` : ''}
+  ${logoUrl ? `<meta property="og:image" content="${logoUrl}">` : ''}
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="${tenant.name} — مساعد صوتي">
   <meta name="twitter:description" content="تحدث الآن مع المساعد الصوتي لـ ${tenant.name}.">
