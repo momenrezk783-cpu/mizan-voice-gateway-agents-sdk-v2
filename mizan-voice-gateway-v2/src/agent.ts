@@ -160,13 +160,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     if (usableBytes === 0) return new Float32Array(0);
     const copy = bytes.slice(0, usableBytes);
     const values = new Float32Array(copy.buffer);
-    // Clamp and reject invalid samples before they reach the ASR model.
-    const clean = new Float32Array(values.length);
-    for (let i = 0; i < values.length; i++) {
-      const value = values[i];
-      clean[i] = Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
-    }
-    return clean;
+    return values;
   }
 
   private async flushAudio(connection: Connection) {
@@ -241,7 +235,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       turnIndex: this.turnCount,
     });
 
-    const systemPrompt = this.buildSystemPrompt(this.responseLanguage);
+    const systemPrompt = this.buildSystemPrompt();
     const recentMessages = this.conversation.slice(-10);
     let reply = "";
 
@@ -384,25 +378,12 @@ export class MizanVoiceAgent extends Agent<Env> {
     return btoa(binary);
   }
 
-  private buildSystemPrompt(language: "ar" | "en"): string {
+  private buildSystemPrompt(): string {
     let prompt = this.globalPrompt;
     if (this.industryGuard) prompt += "\n\n--- قواعد الأمان ---\n" + this.industryGuard;
     if (this.tenantCustomization) prompt += "\n\n--- تعليمات خاصة ---\n" + this.tenantCustomization;
     if (this.knowledgeContext) prompt += "\n\n--- معلومات النشاط ---\n" + this.knowledgeContext;
     if (this.escalationPhone) prompt += "\n\nرقم التحويل/الطوارئ: " + this.escalationPhone;
-
-    if (language === "en") {
-      prompt +=
-        "\n\n--- Response language (highest priority) ---\n" +
-        "The caller is speaking English. Reply in clear, natural English only. " +
-        "Do not switch to Arabic or mix languages unless the caller switches to Arabic. " +
-        "Keep the response concise, friendly, and professional.";
-    } else {
-      prompt +=
-        "\n\n--- لغة الرد (أولوية قصوى) ---\n" +
-        "تحدث باللهجة المصرية فقط بأسلوب ودود ومهني وموجز. " +
-        "إذا انتقل المتصل إلى الإنجليزية، اتبع لغته في الرد.";
-    }
     return prompt;
   }
 
