@@ -1,5 +1,3 @@
-import type { D1Database } from "@cloudflare/workers-types";
-
 export interface ConversationLearning {
   id: string;
   tenant_id: string | null;
