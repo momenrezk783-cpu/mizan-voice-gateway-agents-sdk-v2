@@ -24,13 +24,15 @@ export async function fetchActiveLearnings(
   try {
     const result = await db.prepare(`
       SELECT text FROM learnings
-      WHERE active = 1 AND tenant_id = ?
+      WHERE active = 1
+        AND tenant_id = ?
+        AND source IN ('dialect', 'flow', 'objection', 'domain_faq')
       ORDER BY confidence DESC, created_at DESC
       LIMIT ?
     `).bind(tenantId, Math.max(1, Math.min(12, Math.floor(limit)))).all<{ text: string }>();
     return (result.results ?? [])
-      .map((row) => String(row.text || "").trim())
-      .filter(Boolean);
+      .map((row) => redactPII(String(row.text || "").trim()))
+      .filter((rule) => isSafeLearning(rule));
   } catch (error) {
     console.error("Conversation learnings could not be loaded:", error);
     return [];
