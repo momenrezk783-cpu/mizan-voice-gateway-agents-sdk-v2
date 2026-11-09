@@ -796,7 +796,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   <script src="/js/onboarding.js"></script>
   <script>
     const TENANT_SLUG="${tenant.slug}",SESSION_ID="${sessionId}",WS_BASE="${wsBase}";
-    let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,timerInt=null,startT=null,callAttempt=0;
+    let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,timerInt=null,startT=null,callAttempt=0,playbackTime=0;
     async function toggleCall(){calling?endCall():startCall()}
     async function startCall(){
       const attempt=++callAttempt;
@@ -827,7 +827,21 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
           s.textContent='متصل — تحدث الآن';s.className='st';c.classList.add('visible');w.classList.remove('idle');
           startT=Date.now();timerInt=setInterval(()=>{const e=Math.floor((Date.now()-startT)/1000);document.getElementById('timer').textContent=String(Math.floor(e/60)).padStart(2,'0')+':'+String(e%60).padStart(2,'0')},1000);
         };
-        socket.onmessage=e=>{if(e.data instanceof ArrayBuffer)play(e.data);else{try{const m=JSON.parse(e.data);if(m.type==='transcript')addTurn(m.speaker,m.text)}catch{}}};
+        socket.onmessage=e=>{
+          if(e.data instanceof ArrayBuffer){play(e.data);return}
+          try{
+            const m=JSON.parse(e.data);
+            if(m.type==='transcript')addTurn(m.speaker,m.text);
+            if(m.type==='error'){
+              console.error('Voice agent error:',m.message);
+              s.textContent=m.message||'حدث خطأ في المساعد الصوتي';
+              s.className='st error';
+            }
+            if(m.type==='status'&&m.status==='audio_sent'){
+              console.info('Agent audio received:',m.bytes,'bytes');
+            }
+          }catch(err){console.warn('Unrecognized voice message:',err)}
+        };
         socket.onclose=()=>{if(attempt===callAttempt)endCall()};
         socket.onerror=()=>{if(attempt===callAttempt){s.textContent='خطأ في الاتصال';s.className='st error';endCall()}};
       }catch(err){
@@ -842,7 +856,27 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
     function addTurn(sp,txt){const t=document.getElementById('transcript'),d=document.createElement('div');d.className='turn '+sp;
       const l=document.createElement('div');l.className='turn-label';l.textContent=sp==='caller'?'المتصل':'المساعد';
       const c=document.createElement('div');c.textContent=txt;d.appendChild(l);d.appendChild(c);t.appendChild(d);t.scrollTop=t.scrollHeight}
-    async function play(blob){if(!audioCtx)return;try{const buf=await audioCtx.decodeAudioData(blob.slice(0));const s=audioCtx.createBufferSource();s.buffer=buf;s.connect(audioCtx.destination);s.start()}catch{}}
+    async function play(blob){
+      if(!audioCtx)return;
+      try{
+        if(audioCtx.state==='suspended')await audioCtx.resume();
+        const buf=await audioCtx.decodeAudioData(blob.slice(0));
+        const source=audioCtx.createBufferSource();
+        source.buffer=buf;
+        source.connect(audioCtx.destination);
+        const startAt=Math.max(audioCtx.currentTime,playbackTime);
+        source.start(startAt);
+        playbackTime=startAt+buf.duration;
+        const s=document.getElementById('status');
+        s.textContent='المساعد بيتكلم...';
+        s.className='st';
+      }catch(err){
+        console.error('Agent audio playback failed:',err);
+        const s=document.getElementById('status');
+        s.textContent='وصل الرد النصي لكن تعذر تشغيل الصوت. راجع إعدادات الصوت أو أعد المحاولة.';
+        s.className='st error';
+      }
+    }
   </script>
 </body></html>`;
 
