@@ -71,7 +71,7 @@ export function extractCallerTitleAndName(
   ));
   if (match) {
     const title = canonicalTitle(match[1]);
-    const name = match[2]?.replace(/[،,.\\s!?؟]+/gu, "") || null;
+    const name = match[2]?.replace(/[،,.\s!?؟]+/gu, "") || null;
     if (title) result.title = title;
     if (name && !/^(في|من|على|عن|العيادة|الشركة|المكتب)$/u.test(name)) result.name ||= name;
     result.gender = inferGender(result.title, result.gender);
