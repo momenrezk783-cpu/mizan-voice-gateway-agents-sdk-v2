@@ -48,7 +48,6 @@ type AITranscription = {
   language?: string;
   transcription_info?: { language?: string; language_probability?: number };
 };
-type AITTSResult = { audio?: string; result?: { audio?: string } };
 
 export class MizanVoiceAgent extends Agent<Env> {
   // Keep the active audio buffer and conversation in memory for the lifetime
