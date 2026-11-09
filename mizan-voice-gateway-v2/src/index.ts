@@ -103,12 +103,16 @@ export default {
   // Queue consumer — background D1 writes (non-blocking for voice turns)
   // -------------------------------------------------------------------------
 
-  async queue(batch: MessageBatch<BackgroundMessage>[], env: Env): Promise<void> {
-    for (const message of batch) {
+  async queue(batch: MessageBatch<BackgroundMessage>, env: Env): Promise<void> {
+    for (const message of batch.messages) {
       try {
         await processBackgroundMessage(message.body, env);
+        message.ack();
       } catch (err) {
-        console.error("Background task failed:", err);
+        console.error("Background task failed:", {
+          messageId: message.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
         message.retry({ delaySeconds: 30 });
       }
     }
