@@ -165,7 +165,9 @@ export function sanitizeForSpeech(raw: string, context: PersonTitleContext = {})
     .replace(/من\s+حضرتك/gu, "منك")
     .replace(/حضرتك/gu, feminine ? "إنتي" : "إنت")
     .replace(/سيادتك|سعادتك/gu, feminine ? "إنتي" : "إنت")
-    .replace(/(?:^|[\s،,.!؟])(?:فندم|أفندم|افندم)\s*[،,]?/gu, " ");
+    .replace(/(?:^|[\s،,.!؟])(?:فندم|أفندم|افندم)\s*[،,]?/gu, " ")
+    .replace(/يا\s*(?:باشا|بيه|بك|هانم|معلم|زعيم|غالي|ريس)(?=$|[\s،,.!؟])/gu, "")
+    .replace(/طال\s*عمرك|تحت\s*أمرك|أؤمرني|أمرك\s*يا/gu, "");
 
   const vocative = new RegExp(`يا\\s+(دكتورة|دكتوره|دكتور|باشمهندسة|باشمهندسه|باشمهندس|مهندسة|مهندسه|مهندس|أستاذة|أستاذه|استاذة|استاذه|أستاذ|استاذ|مستر|كابتن|شيخ)(?:\\s+([\\u0621-\\u064A]{2,18}))?`, "gu");
   value = value.replace(vocative, (_match, rawTitle: string, rawName?: string) => {
@@ -177,5 +179,5 @@ export function sanitizeForSpeech(raw: string, context: PersonTitleContext = {})
     return "";
   });
 
-  return value.replace(/[ \\t]{2,}/gu, " ").replace(/\\s+([،,.!?؟])/gu, "$1").trim();
+  return value.replace(/[ \t]{2,}/gu, " ").replace(/\s+([،,.!?؟])/gu, "$1").trim();
 }
