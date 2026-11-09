@@ -144,7 +144,7 @@ th { background: #f5f8fc; }
   .bars { gap: 10px; overflow-x: auto; padding-bottom: 2px; }
   .bc { min-width: 34px; }
   table { min-width: 620px; }
-  .card:has(> table), .card:has(.table-wrap) { overflow-x: auto; }
+  .card { overflow-x: auto; }
   .toast-banner { left: 12px; right: 12px; bottom: 12px; text-align: center; }
 }
 
