@@ -1,13 +1,4 @@
-export interface ConversationLearning {
-  id: string;
-  tenant_id: string | null;
-  category: string;
-  rule_ar: string;
-  source_call_id: string;
-  confidence: number;
-  active: number;
-  created_at: number;
-}
+import { redactPII } from "../crypto";
 
 export interface LearningCandidate {
   category: "dialect" | "flow" | "objection" | "domain_faq";
@@ -20,44 +11,36 @@ export interface LearningEvaluation {
   candidate_learnings: LearningCandidate[];
 }
 
-let initialized = false;
-
-async function ensureLearningTable(db: D1Database): Promise<void> {
-  if (initialized) return;
-  await db.batch([
-    db.prepare(`CREATE TABLE IF NOT EXISTS learnings (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT,
-      category TEXT NOT NULL,
-      rule_ar TEXT NOT NULL,
-      source_call_id TEXT NOT NULL,
-      confidence REAL NOT NULL DEFAULT 0.8,
-      active INTEGER NOT NULL DEFAULT 1,
-      created_at INTEGER NOT NULL
-    )`),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_learnings_active ON learnings(tenant_id, active, confidence DESC)")
-  ]);
-  initialized = true;
-}
-
+/**
+ * Gateway already owns the learnings table. Its schema is intentionally
+ * tenant-scoped (tenant_id NOT NULL), with rule text in text and category in source.
+ * Do not create a parallel Mizan-source schema or alter the existing table.
+ */
 export async function fetchActiveLearnings(
   db: D1Database,
   tenantId: string,
   limit = 6
 ): Promise<string[]> {
   try {
-    await ensureLearningTable(db);
     const result = await db.prepare(`
-      SELECT rule_ar FROM learnings
-      WHERE active = 1 AND (tenant_id = ? OR tenant_id IS NULL)
+      SELECT text FROM learnings
+      WHERE active = 1 AND tenant_id = ?
       ORDER BY confidence DESC, created_at DESC
       LIMIT ?
-    `).bind(tenantId, Math.max(1, Math.min(12, Math.floor(limit)))).all<{ rule_ar: string }>();
-    return (result.results ?? []).map((row) => String(row.rule_ar || "").trim()).filter(Boolean);
+    `).bind(tenantId, Math.max(1, Math.min(12, Math.floor(limit)))).all<{ text: string }>();
+    return (result.results ?? [])
+      .map((row) => String(row.text || "").trim())
+      .filter(Boolean);
   } catch (error) {
     console.error("Conversation learnings could not be loaded:", error);
     return [];
   }
+}
+
+function isSafeLearning(value: string): boolean {
+  if (value.length < 10 || value.length > 220) return false;
+  if (/(?:\b01[0125]\d{8}\b|\b\d{14}\b|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/iu.test(value)) return false;
+  return !/(?:حضرتك|فندم|افندم|أفندم|باشا|بيه|هانم|سيادتك|سعادتك)/u.test(value);
 }
 
 export async function persistCallEvaluationAndLearnings(
@@ -67,27 +50,29 @@ export async function persistCallEvaluationAndLearnings(
   evaluation: LearningEvaluation
 ): Promise<void> {
   if (!Number.isFinite(evaluation.score_overall) || evaluation.score_overall < 75) return;
-  await ensureLearningTable(db);
+
   for (const candidate of evaluation.candidate_learnings ?? []) {
-    const rule = String(candidate.rule_ar ?? "").trim();
-    if (rule.length < 10 || rule.length > 220) continue;
-    const scopedTenant = candidate.category === "domain_faq" ? tenantId : null;
+    const rule = redactPII(String(candidate.rule_ar ?? "").trim());
+    if (!isSafeLearning(rule)) continue;
     await db.prepare(`
-      INSERT INTO learnings (id, tenant_id, category, rule_ar, source_call_id, confidence, active, created_at)
-      SELECT ?, ?, ?, ?, ?, ?, 1, ?
+      INSERT INTO learnings (
+        id, tenant_id, source_call_id, text, source,
+        confidence, active, applied_count, created_at
+      )
+      SELECT ?, ?, ?, ?, ?, ?, 1, 0, ?
       WHERE NOT EXISTS (
         SELECT 1 FROM learnings
-        WHERE tenant_id IS ? AND category = ? AND rule_ar = ? AND active = 1
+        WHERE tenant_id = ? AND source = ? AND text = ? AND active = 1
       )
     `).bind(
       crypto.randomUUID(),
-      scopedTenant,
-      candidate.category,
-      rule,
+      tenantId,
       callId,
+      rule,
+      candidate.category,
       evaluation.score_overall / 100,
       Date.now(),
-      scopedTenant,
+      tenantId,
       candidate.category,
       rule
     ).run();
