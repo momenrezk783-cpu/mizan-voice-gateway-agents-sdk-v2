@@ -1,5 +1,7 @@
 # FOLLOW_UP
 
-Fixed the public voice page startup race and the nested template-literal syntax error that blocked Worker compilation; the WebSocket URL now uses safe string concatenation inside the generated HTML. PR #2 was merged into `main` (merge commit `2fa183dff4bed8a8405944523139d6214ece77b3`); the Cloudflare deploy workflow is configured to run on pushes to `main`, but the new deployment has not yet been verified and browser/device integration testing remains outstanding.
+The public voice startup race and generated-JavaScript syntax fixes are merged in PR #2; the D1 industry guard fix is merged in PR #5 and deployed as Worker version `17d56d13-4229-444b-a02b-e15c3a954535`.
 
-Fixed the D1 `undefined` bind in `getIndustryGuard`: missing or legacy-cached tenant industry values now safely resolve to the fail-safe `healthcare` guard, matching the database migration default, and both slug/domain tenant resolvers normalize cached and database records. Changes are on `fix/industry-guard-undefined`; static source review passed, but runtime tests and deployment are still pending.
+Created the production `Mizan HQ` tenant (`mizan-hq`) in D1 with its AI-development business description, general industry guard, and production plan; synchronized its KV tenant cache and verified the D1 row, while leaving `logo_url` null until the new static logo asset is deployed.
+
+On branch `feat/mizan-hq-branding-and-tenant`, replaced the old scale placeholder across the public site, portal, login, admin, search, and voice-page header with the supplied Mizan HQ logo, made voice-page logo metadata URLs absolute, and updated the landing-page positioning to AI development; PR review and deployment remain pending, with no merge or Worker deployment performed.

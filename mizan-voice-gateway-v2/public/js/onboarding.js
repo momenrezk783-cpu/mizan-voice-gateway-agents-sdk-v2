@@ -1,5 +1,5 @@
 // ============================================================================
-// Mizan Consult — User Onboarding & Product Walkthrough Tool (RTL Arabic)
+// Mizan HQ — User Onboarding & Product Walkthrough Tool (RTL Arabic)
 // ============================================================================
 // Triggers:
 //   1. Automatically on first-time login (when mizan_trigger_onboarding=1 or
@@ -158,7 +158,7 @@
     landing: [
       {
         selector: ".hero h1",
-        title: "مرحباً بك في منصة ميزان كونسلت",
+        title: "مرحباً بك في منصة ميزان هيد كوارتر",
         desc: "مساعد صوتي ذكي يتحدث باللهجة المصرية ومصمم لخدمة كافة الأنشطة والقطاعات (الشركات التجارية، المكاتب القانونية، العقارات، التعليم، والمراكز المتخصصة)."
       },
       {
