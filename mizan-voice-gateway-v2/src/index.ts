@@ -473,7 +473,7 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
     await env.DB.prepare(
       `INSERT INTO tenant_voice_config (tenant_slug, system_prompt, voice_id)
        VALUES (?, ?, ?)`
-    ).bind(body.slug, body.system_prompt, body.voice_id ?? "SAz9YHcvj6GT2YYXdXww").run();
+    ).bind(body.slug, body.system_prompt, body.voice_id ?? "P2DK6Lg0vxyKGYj3QOik").run();
 
     return json({ ok: true, tenantId }, 201);
   }

@@ -11,7 +11,21 @@ import {
   getIndustryGuard,
   getTenantVoiceConfig,
   getTenantKnowledge,
+  getHQElevenLabsConfig,
+  type HQElevenLabsConfig
 } from "./lib/tenant";
+import {
+  extractCallerTitleAndName,
+  resolvePersonAddressPolicy,
+  sanitizeForSpeech,
+  type ConversationState,
+  type PersonTitleContext
+} from "./lib/conversation-manager/guard";
+import { evaluateCall } from "./lib/conversation-manager/evaluator";
+import {
+  fetchActiveLearnings,
+  persistCallEvaluationAndLearnings
+} from "./lib/conversation-manager/db";
 import { redactPII } from "./lib/crypto";
 
 interface Env {
@@ -26,6 +40,8 @@ interface Env {
   ADMIN_PASSKEY_HASH: string;
   PRIMARY_LLM: string;
   FALLBACK_LLM: string;
+  ELEVENLABS_TTS_KEY?: string;
+  ELEVENLABS_API_KEY?: string;
   ENVIRONMENT: string;
 }
 
@@ -46,8 +62,6 @@ type AITranscription = {
   language?: string;
   transcription_info?: { language?: string; language_probability?: number };
 };
-type AITTSResult = { audio?: string; result?: { audio?: string } };
-
 export class MizanVoiceAgent extends Agent<Env> {
   // Keep the active audio buffer and conversation in memory for the lifetime
   // of this live call. The browser sends utterance boundaries as audio_end.
@@ -68,6 +82,8 @@ export class MizanVoiceAgent extends Agent<Env> {
   private conversation: ChatMessage[] = [];
   private processingAudio = false;
   private responseLanguage: "ar" | "en" = "ar";
+  private elevenLabsConfig: HQElevenLabsConfig | null = null;
+  private personTitleContext: PersonTitleContext = { role: "caller" };
 
   async onStart() {
     this.callStartTime = Date.now();
@@ -88,6 +104,18 @@ export class MizanVoiceAgent extends Agent<Env> {
 
     const globalConfig = await getGlobalVoiceConfig(this.env);
     this.globalPrompt = globalConfig.system_prompt;
+    this.elevenLabsConfig = this.tenantSlug === "mizan-hq"
+      ? await getHQElevenLabsConfig(this.env)
+      : {
+          voice_id: globalConfig.voice_id,
+          model_id: "eleven_v4_turbo",
+          stability: 0.4,
+          similarity_boost: 0.9,
+          speed: 0.9
+        };
+    if (this.tenantSlug === "mizan-hq" && !this.elevenLabsConfig) {
+      console.error("HQ ElevenLabs config is missing; public-page voice settings are intentionally ignored");
+    }
 
     this.industryGuard = await getIndustryGuard(tenant.industry || "general", this.env);
 
@@ -225,6 +253,13 @@ export class MizanVoiceAgent extends Agent<Env> {
     if (!this.tenantSlug || !this.sessionId) return;
     const turnStart = Date.now();
     this.turnCount++;
+    const callerIdentity = extractCallerTitleAndName(transcript, this.personTitleContext);
+    this.personTitleContext = {
+      role: "caller",
+      callerName: callerIdentity.name,
+      callerTitle: callerIdentity.title,
+      callerGender: callerIdentity.gender
+    };
 
     await this.env.BACKGROUND_QUEUE.send({
       type: "record_turn",
@@ -276,6 +311,8 @@ export class MizanVoiceAgent extends Agent<Env> {
           ? "Could you please clarify what you need?"
           : "ممكن توضح لي طلبك أكتر؟";
     }
+    reply = sanitizeForSpeech(reply, this.personTitleContext);
+    if (!reply) reply = "ممكن توضح لي طلبك أكتر؟";
     this.conversation.push({ role: "user", content: transcript }, { role: "assistant", content: reply });
     if (this.conversation.length > 20) this.conversation = this.conversation.slice(-20);
 
@@ -302,38 +339,80 @@ export class MizanVoiceAgent extends Agent<Env> {
     connection.send(JSON.stringify({ type: "status", status: "speaking" }));
 
     try {
-      // Grok TTS explicitly supports Egyptian Arabic (ar-EG) and English.
-      const tts = (await this.env.AI.run("xai/grok-tts", {
-        text: reply,
-        language: this.responseLanguage === "en" ? "en" : "ar-EG",
-        voice_id: "ara",
-        output_format: { codec: "mp3", sample_rate: 24000 },
-      })) as AITTSResult;
-
-      const audioUrl = tts?.audio ?? tts?.result?.audio;
-      if (!audioUrl) throw new Error("TTS response did not include an audio URL");
-      const parsedAudioUrl = new URL(audioUrl);
-      if (parsedAudioUrl.protocol !== "https:") {
-        throw new Error("TTS returned a non-HTTPS audio URL");
-      }
-      const audioResponse = await fetch(parsedAudioUrl.toString());
-      if (!audioResponse.ok) {
-        throw new Error("TTS audio download failed with HTTP " + audioResponse.status);
-      }
-      const contentType = audioResponse.headers.get("content-type") || "";
-      if (contentType && !contentType.startsWith("audio/") && !contentType.includes("octet-stream")) {
-        throw new Error("TTS returned an unexpected content type: " + contentType);
-      }
-      const audio = await audioResponse.arrayBuffer();
-      if (audio.byteLength < 100) {
-        throw new Error("TTS returned an empty or incomplete audio payload");
-      }
+      const audio = await this.synthesizeElevenLabsAudio(reply);
       connection.send(audio);
       connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength }));
     } catch (ttsError) {
-      console.error("TTS failed:", ttsError);
-      connection.send(JSON.stringify({ type: "error", message: "تعذر تشغيل الرد الصوتي." }));
+      console.error("ElevenLabs TTS failed:", ttsError);
+      connection.send(JSON.stringify({ type: "error", message: "تعذر تشغيل صوت ميزان من إعدادات HQ." }));
     }
+  }
+
+  private async synthesizeElevenLabsAudio(text: string): Promise<ArrayBuffer> {
+    const apiKey = (this.env.ELEVENLABS_TTS_KEY || this.env.ELEVENLABS_API_KEY || "").trim();
+    if (!apiKey) throw new Error("ELEVENLABS_TTS_KEY secret is not configured");
+    const config = this.elevenLabsConfig;
+    if (!config?.voice_id) throw new Error("HQ ElevenLabs voice config is unavailable");
+
+    const endpoint = new URL("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(config.voice_id));
+    endpoint.searchParams.set("output_format", "mp3_44100_128");
+    let lastError = "ElevenLabs request failed";
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      let response: Response;
+      try {
+        response = await fetch(endpoint.toString(), {
+          method: "POST",
+          headers: {
+            "xi-api-key": apiKey,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            text,
+            model_id: config.model_id,
+            language_code: this.responseLanguage === "en" ? "en" : "ar",
+            voice_settings: {
+              stability: config.stability,
+              similarity_boost: config.similarity_boost,
+              speed: config.speed,
+              use_speaker_boost: true
+            }
+          }),
+          signal: controller.signal
+        });
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        if (attempt === 3) throw new Error("ElevenLabs network/timeout error: " + lastError);
+        await new Promise((resolve) => setTimeout(resolve, attempt * 300));
+        continue;
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      if (response.ok) {
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType && !contentType.startsWith("audio/") && !contentType.includes("octet-stream")) {
+          throw new Error("ElevenLabs returned unexpected content type: " + contentType);
+        }
+        const audio = await response.arrayBuffer();
+        if (audio.byteLength < 100) throw new Error("ElevenLabs returned empty or incomplete MP3 audio");
+        return audio;
+      }
+
+      const errorBody = (await response.text()).slice(0, 300);
+      lastError = "ElevenLabs HTTP " + response.status + ": " + errorBody;
+      const retryable = response.status === 429 || response.status === 500 ||
+        response.status === 502 || response.status === 503 || response.status === 504;
+      if (!retryable || attempt === 3) throw new Error(lastError);
+      const retryAfter = Number(response.headers.get("retry-after") || 0);
+      const delayMs = retryAfter > 0
+        ? Math.min(3000, Math.max(250, retryAfter * 1000))
+        : attempt * 400;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    throw new Error(lastError);
   }
 
   private encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
@@ -400,6 +479,45 @@ export class MizanVoiceAgent extends Agent<Env> {
       tenantSlug: this.tenantSlug,
       sessionId: this.sessionId,
     });
+
+    if (this.conversation.some((turn) => turn.role === "assistant")) {
+      const evalState: ConversationState = {
+        callId: this.sessionId,
+        tenantId: this.tenantSlug,
+        caller: {
+          phone: "",
+          name: this.personTitleContext.callerName ?? undefined,
+          title: this.personTitleContext.callerTitle ?? undefined,
+          gender: this.personTitleContext.callerGender ?? "unknown",
+          isReturning: false
+        },
+        transcript: this.conversation.map((turn, idx) => ({
+          idx,
+          role: turn.role,
+          content: redactPII(turn.content)
+            .replace(/\b\d{14}\b/gu, "[رقم قومي]")
+            .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, "[بريد إلكتروني]"),
+          ts: this.callStartTime + idx * 1000
+        })),
+        outcome: "caller_hung_up"
+      };
+      try {
+        const evaluation = await evaluateCall(this.env.AI, this.env.PRIMARY_LLM, evalState);
+        await persistCallEvaluationAndLearnings(
+          this.env.DB,
+          this.sessionId,
+          this.tenantSlug,
+          evaluation
+        );
+        console.info("Conversation evaluation saved", {
+          sessionId: this.sessionId,
+          score: evaluation.score_overall,
+          learningCount: evaluation.candidate_learnings.length
+        });
+      } catch (error) {
+        console.error("Conversation learning persistence failed:", error);
+      }
+    }
   }
 }
 
