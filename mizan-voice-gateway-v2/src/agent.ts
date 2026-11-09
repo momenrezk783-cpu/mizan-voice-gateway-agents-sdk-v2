@@ -280,9 +280,9 @@ export class MizanVoiceAgent extends Agent<Env> {
     const activeLearnings = await fetchActiveLearnings(this.env.DB, this.tenantSlug, 6);
     const addressPolicy = resolvePersonAddressPolicy(this.personTitleContext);
     const learningBlock = activeLearnings.length
-      ? "\\n\\n--- قواعد تعلمها المحرك من المكالمات الناجحة ---\\n" + activeLearnings.map((rule) => "- " + rule).join("\\n")
+      ? "\n\n--- قواعد تعلمها المحرك من المكالمات الناجحة ---\n" + activeLearnings.map((rule) => "- " + rule).join("\n")
       : "";
-    const personBlock = "\\n\\n--- مخاطبة المتصل ---\\n" +
+    const personBlock = "\n\n--- مخاطبة المتصل ---\n" +
       "صيغة المخاطبة المناسبة: " + addressPolicy.preferredAddress + ". " +
       "ممنوع استخدام حضرتك أو يا فندم أو تخمين لقب مهني غير معلن.";
     const systemPrompt = this.buildSystemPrompt(this.responseLanguage) + personBlock + learningBlock;
