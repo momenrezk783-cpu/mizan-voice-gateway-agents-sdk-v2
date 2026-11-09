@@ -522,7 +522,9 @@ export class MizanVoiceAgent extends Agent<Env> {
         transcript: this.conversation.map((turn, idx) => ({
           idx,
           role: turn.role,
-          content: turn.content,
+          content: redactPII(turn.content)
+            .replace(/\\b\\d{14}\\b/gu, "[رقم قومي]")
+            .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/giu, "[بريد إلكتروني]"),
           ts: this.callStartTime + idx * 1000
         })),
         outcome: "caller_hung_up"
