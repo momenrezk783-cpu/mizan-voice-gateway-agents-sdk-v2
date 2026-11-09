@@ -41,8 +41,12 @@ interface BackgroundMessage {
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
-type AITranscription = { text?: string };
-type AITTSResult = { audio?: string };
+type AITranscription = {
+  text?: string;
+  language?: string;
+  transcription_info?: { language?: string; language_probability?: number };
+};
+type AITTSResult = { audio?: string; result?: { audio?: string } };
 
 export class MizanVoiceAgent extends Agent<Env> {
   // Keep the active audio buffer and conversation in memory for the lifetime
@@ -63,6 +67,7 @@ export class MizanVoiceAgent extends Agent<Env> {
   private audioSampleCount = 0;
   private conversation: ChatMessage[] = [];
   private processingAudio = false;
+  private responseLanguage: "ar" | "en" = "ar";
 
   async onStart() {
     this.callStartTime = Date.now();
@@ -186,8 +191,19 @@ export class MizanVoiceAgent extends Agent<Env> {
 
       const transcription = await this.env.AI.run(
         "@cf/openai/whisper-large-v3-turbo",
-        { audio: audioBase64, task: "transcribe", language: "ar", vad_filter: false }
+        // Omitting language lets Whisper identify Arabic vs English from the audio.
+        { audio: audioBase64, task: "transcribe", vad_filter: false }
       ) as AITranscription;
+
+      const detectedLanguage = (
+        transcription?.transcription_info?.language ?? transcription?.language ?? ""
+      ).toLowerCase();
+      const languageProbability = transcription?.transcription_info?.language_probability;
+      const languageIsConfident =
+        typeof languageProbability !== "number" || languageProbability >= 0.55;
+      // Arabic Egyptian is the default; only switch to English when Whisper detects English.
+      this.responseLanguage =
+        detectedLanguage.startsWith("en") && languageIsConfident ? "en" : "ar";
 
       const transcript = (transcription?.text || "").trim();
       if (!transcript) {
@@ -228,7 +244,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       turnIndex: this.turnCount,
     });
 
-    const systemPrompt = this.buildSystemPrompt();
+    const systemPrompt = this.buildSystemPrompt(this.responseLanguage);
     const recentMessages = this.conversation.slice(-10);
     let reply = "";
 
@@ -256,11 +272,19 @@ export class MizanVoiceAgent extends Agent<Env> {
         reply = result.text.trim();
       } catch (fallbackError) {
         console.error("Fallback LLM failed:", fallbackError);
-        reply = "عذراً، حصلت مشكلة تقنية مؤقتة. ممكن تحاول تاني؟";
+        reply =
+          this.responseLanguage === "en"
+            ? "Sorry, I'm having a temporary technical issue. Could you please try again?"
+            : "عذراً، حصلت مشكلة تقنية مؤقتة. ممكن تحاول تاني؟";
       }
     }
 
-    if (!reply) reply = "ممكن توضح لي طلبك أكتر؟";
+    if (!reply) {
+      reply =
+        this.responseLanguage === "en"
+          ? "Could you please clarify what you need?"
+          : "ممكن توضح لي طلبك أكتر؟";
+    }
     this.conversation.push({ role: "user", content: transcript }, { role: "assistant", content: reply });
     if (this.conversation.length > 20) this.conversation = this.conversation.slice(-20);
 
@@ -287,29 +311,25 @@ export class MizanVoiceAgent extends Agent<Env> {
     connection.send(JSON.stringify({ type: "status", status: "speaking" }));
 
     try {
-      const tts = await this.env.AI.run(
-        "@cf/deepgram/aura-1",
-        { text: reply, speaker: "asteria", encoding: "mp3" },
-        { returnRawResponse: true }
-      );
+      // Grok TTS explicitly supports Egyptian Arabic (ar-EG) and English.
+      const tts = (await this.env.AI.run("xai/grok-tts", {
+        text: reply,
+        language: this.responseLanguage === "en" ? "en" : "ar-EG",
+        voice_id: "ara",
+        output_format: { codec: "mp3", sample_rate: 24000 },
+      })) as AITTSResult;
 
-      let audio: ArrayBuffer;
-      if (tts instanceof Response) {
-        if (!tts.ok) throw new Error("TTS returned HTTP " + tts.status);
-        audio = await tts.arrayBuffer();
-      } else if (tts instanceof ArrayBuffer) {
-        audio = tts;
-      } else if (tts && typeof tts === "object" && "audio" in tts) {
-        const encoded = (tts as AITTSResult).audio;
-        if (!encoded) throw new Error("TTS response did not include audio");
-        const binary = atob(encoded);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        audio = bytes.buffer;
-      } else {
-        throw new Error("Unsupported TTS response");
+      const audioUrl = tts?.audio ?? tts?.result?.audio;
+      if (!audioUrl) throw new Error("TTS response did not include an audio URL");
+      const parsedAudioUrl = new URL(audioUrl);
+      if (parsedAudioUrl.protocol !== "https:") {
+        throw new Error("TTS returned a non-HTTPS audio URL");
       }
-
+      const audioResponse = await fetch(parsedAudioUrl.toString());
+      if (!audioResponse.ok) {
+        throw new Error("TTS audio download failed with HTTP " + audioResponse.status);
+      }
+      const audio = await audioResponse.arrayBuffer();
       if (audio.byteLength) connection.send(audio);
     } catch (ttsError) {
       console.error("TTS failed:", ttsError);
@@ -359,13 +379,25 @@ export class MizanVoiceAgent extends Agent<Env> {
     return btoa(binary);
   }
 
-  private buildSystemPrompt(): string {
+  private buildSystemPrompt(language: "ar" | "en"): string {
     let prompt = this.globalPrompt;
     if (this.industryGuard) prompt += "\n\n--- قواعد الأمان ---\n" + this.industryGuard;
     if (this.tenantCustomization) prompt += "\n\n--- تعليمات خاصة ---\n" + this.tenantCustomization;
     if (this.knowledgeContext) prompt += "\n\n--- معلومات النشاط ---\n" + this.knowledgeContext;
     if (this.escalationPhone) prompt += "\n\nرقم التحويل/الطوارئ: " + this.escalationPhone;
-    prompt += "\n\nتحدث باللهجة المصرية بأسلوب ودود ومهني. كن موجزاً.";
+
+    if (language === "en") {
+      prompt +=
+        "\n\n--- Response language (highest priority) ---\n" +
+        "The caller is speaking English. Reply in clear, natural English only. " +
+        "Do not switch to Arabic or mix languages unless the caller switches to Arabic. " +
+        "Keep the response concise, friendly, and professional.";
+    } else {
+      prompt +=
+        "\n\n--- لغة الرد (أولوية قصوى) ---\n" +
+        "تحدث باللهجة المصرية فقط بأسلوب ودود ومهني وموجز. " +
+        "إذا انتقل المتصل إلى الإنجليزية، اتبع لغته في الرد.";
+    }
     return prompt;
   }
 
