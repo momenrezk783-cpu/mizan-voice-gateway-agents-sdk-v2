@@ -21,9 +21,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Node
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-        uses: actions/setup-node@v4
 
       - name: Install dependencies
         working-directory: ./mizan-voice-gateway-v2
