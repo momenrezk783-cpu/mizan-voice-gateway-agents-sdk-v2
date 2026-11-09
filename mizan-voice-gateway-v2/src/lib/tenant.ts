@@ -54,7 +54,7 @@ export async function getGlobalVoiceConfig(
   if (!row) {
     return {
       system_prompt: "أنت ميزان، المساعد الصوتي المصري العام.",
-      voice_id: "P2DK6Lg0vxyKGYj3QOik",
+      voice_id: "6CdZI3ijDBOuX5Giq3NQ",
     };
   }
 
