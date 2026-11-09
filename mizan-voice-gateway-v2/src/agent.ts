@@ -196,7 +196,6 @@ export class MizanVoiceAgent extends Agent<Env> {
           task: "transcribe",
           language: "ar",
           vad_filter: false,
-          initial_prompt: "الكلام باللهجة المصرية العامية. اكتب الكلام المنطوق بالعربية فقط، مع الحفاظ على أسماء الأشخاص والشركات كما نُطقت."
         }
       ) as AITranscription;
 
