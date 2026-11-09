@@ -109,9 +109,10 @@ head_sampling_rate = 1
 enabled = true
 
 # Secrets (inject via `wrangler secret put`):
+#   AZURE_SPEECH_KEY     — Azure Speech resource key (F0 free quota)
 #   SESSION_SECRET       — HMAC-SHA256 session token signing
 #   CONTACT_ENC_KEY      — 256-bit AES-GCM key for patient PII
 #   ADMIN_PASSKEY_HASH   — Super Admin passkey gate
 #
-# NOTE: No ELEVENLABS_API_KEY or DEEPGRAM_API_KEY needed —
-# Workers AI handles STT/TTS on Cloudflare's edge GPUs.
+# Azure Speech TTS uses AZURE_SPEECH_KEY plus AZURE_SPEECH_REGION in the Worker environment.
+# Set AZURE_SPEECH_REGION to the region of the Azure Speech resource; never commit the key.
