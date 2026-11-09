@@ -66,6 +66,49 @@ export async function getGlobalVoiceConfig(
 // 2. Industry Guard (Safety rule — LOCKED, super_admin only)
 // ---------------------------------------------------------------------------
 
+export interface HQElevenLabsConfig {
+  voice_id: string;
+  model_id: string;
+  stability: number;
+  similarity_boost: number;
+  speed: number;
+}
+
+/**
+ * Reads the voice selected in the central HQ admin console.
+ * Deliberately does not read the public-page localStorage voice or tenant defaults.
+ */
+export async function getHQElevenLabsConfig(
+  env: { DB: D1Database }
+): Promise<HQElevenLabsConfig | null> {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT html FROM _portal_assets WHERE key = 'elevenlabs_config' LIMIT 1"
+    ).first<{ html: string }>();
+    if (!row?.html) return null;
+
+    const saved = JSON.parse(row.html) as Record<string, unknown>;
+    const voiceId = typeof saved.voice_id === "string" ? saved.voice_id.trim() : "";
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(voiceId)) return null;
+
+    const numeric = (value: unknown, fallback: number, min: number, max: number) => {
+      const number = Number(value);
+      return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+    };
+
+    return {
+      voice_id: voiceId,
+      model_id: "eleven_v4_turbo",
+      stability: numeric(saved.stability, 0.4, 0, 1),
+      similarity_boost: numeric(saved.similarity_boost, 0.9, 0, 1),
+      speed: numeric(saved.speed, 0.9, 0.7, 1.2)
+    };
+  } catch (error) {
+    console.error("HQ ElevenLabs configuration could not be loaded:", error);
+    return null;
+  }
+}
+
 export async function getIndustryGuard(
   industry: string | null | undefined,
   env: { DB: D1Database; TENANT_CONFIG: KVNamespace }
