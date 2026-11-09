@@ -1,8 +1,0 @@
-# Isolated, static-only preview of the Mizan HQ redesign.
-# Deliberately has no main script, routes, secrets, D1, KV, DO, or queue bindings.
-name = "mizan-hq-visual-preview"
-compatibility_date = "2026-11-08"
-workers_dev = true
-
-[assets]
-directory = "./public"
