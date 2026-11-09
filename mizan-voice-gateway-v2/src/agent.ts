@@ -27,6 +27,8 @@ interface Env {
   PRIMARY_LLM: string;
   FALLBACK_LLM: string;
   ENVIRONMENT: string;
+  AZURE_SPEECH_KEY: string;
+  AZURE_SPEECH_REGION: string;
 }
 
 interface BackgroundMessage {
@@ -302,31 +304,51 @@ export class MizanVoiceAgent extends Agent<Env> {
     connection.send(JSON.stringify({ type: "status", status: "speaking" }));
 
     try {
-      // Grok TTS explicitly supports Egyptian Arabic (ar-EG) and English.
-      const tts = (await this.env.AI.run("xai/grok-tts", {
-        text: reply,
-        language: this.responseLanguage === "en" ? "en" : "ar-EG",
-        voice_id: "ara",
-        output_format: { codec: "mp3", sample_rate: 24000 },
-      })) as AITTSResult;
-
-      const audioUrl = tts?.audio ?? tts?.result?.audio;
-      if (!audioUrl) throw new Error("TTS response did not include an audio URL");
-      const parsedAudioUrl = new URL(audioUrl);
-      if (parsedAudioUrl.protocol !== "https:") {
-        throw new Error("TTS returned a non-HTTPS audio URL");
+      // Azure Speech F0: Egyptian Arabic is explicit in SSML and the selected neural voice.
+      const speechKey = this.env.AZURE_SPEECH_KEY;
+      const speechRegion = this.env.AZURE_SPEECH_REGION;
+      if (!speechKey || !speechRegion) {
+        throw new Error("Azure Speech credentials are not configured");
       }
-      const audioResponse = await fetch(parsedAudioUrl.toString());
+
+      const safeReply = reply.replace(/[&<>"']/g, (character) => {
+        const entities: Record<string, string> = {
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&apos;",
+        };
+        return entities[character];
+      });
+      const ssml =
+        '<speak version="1.0" xml:lang="ar-EG"><voice name="ar-EG-ShakirNeural" xml:lang="ar-EG">' +
+        safeReply +
+        "</voice></speak>";
+
+      const audioResponse = await fetch(
+        "https://" + speechRegion + ".tts.speech.microsoft.com/cognitiveservices/v1",
+        {
+          method: "POST",
+          headers: {
+            "Ocp-Apim-Subscription-Key": speechKey,
+            "Content-Type": "application/ssml+xml",
+            "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
+            "User-Agent": "MizanVoiceGateway",
+          },
+          body: ssml,
+        }
+      );
       if (!audioResponse.ok) {
-        throw new Error("TTS audio download failed with HTTP " + audioResponse.status);
+        throw new Error("Azure Speech TTS failed with HTTP " + audioResponse.status);
       }
       const contentType = audioResponse.headers.get("content-type") || "";
       if (contentType && !contentType.startsWith("audio/") && !contentType.includes("octet-stream")) {
-        throw new Error("TTS returned an unexpected content type: " + contentType);
+        throw new Error("Azure Speech returned an unexpected content type: " + contentType);
       }
       const audio = await audioResponse.arrayBuffer();
       if (audio.byteLength < 100) {
-        throw new Error("TTS returned an empty or incomplete audio payload");
+        throw new Error("Azure Speech returned an empty or incomplete audio payload");
       }
       connection.send(audio);
       connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength }));
