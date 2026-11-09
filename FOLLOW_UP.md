@@ -1,7 +1,5 @@
 # FOLLOW_UP
 
-On branch `feat/hq-elevenlabs-conversation-engine`, the Gateway reads ElevenLabs voice settings only from HQ's `_portal_assets.elevenlabs_config` record (voice `JTMaHm6sHVI3NZgPaWDz`, model `eleven_v4_turbo`, speed 0.9, stability 0.4, similarity 0.9), sends MP3 audio through ElevenLabs, and includes the active caller guard, tenant-scoped learning, and post-call evaluation modules.
+On branch `feat/hq-elevenlabs-conversation-engine`, the HQ `_portal_assets.elevenlabs_config` record was read and its ElevenLabs voice ID was switched from `JTMaHm6sHVI3NZgPaWDz` to `P2DK6Lg0vxyKGYj3QOik`, matching the ID configured in `Mizan-source-/voice-agent/wrangler.jsonc`; the write was read back and verified. The HQ model and voice settings remain `eleven_v4_turbo`, speed 0.9, stability 0.4, and similarity 0.9; the public-page voice configuration, Whisper/STT, LLM, WebSocket protocol, and browser playback were not changed.
 
-Whisper Arabic transcription (`language: ar` with the Egyptian context prompt), the existing LLM primary/fallback flow, WebSocket protocol, and browser MP3 playback remain in place; the evaluator redacts phone, national-ID, and email patterns before model review. The `ELEVENLABS_TTS_KEY` Worker secret is present, and GitHub Actions run 42612657262 successfully completed dependency installation and Wrangler deployment to `mizan-voice-gateway` on 2026-11-09; no PR was opened and no merge to `main` was performed.
-
-Deployment success confirms the Worker upload, not a successful live ElevenLabs synthesis or browser/device call; those runtime checks remain the next step.
+This was a D1 configuration update only: no source-code change, deployment, PR, or merge to `main` was performed; the new HQ voice ID should be used by the next session that loads the HQ configuration. The STT false-transcription / speaker-feedback issue remains unresolved and is a separate follow-up.
