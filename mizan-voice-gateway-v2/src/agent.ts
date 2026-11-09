@@ -191,19 +191,17 @@ export class MizanVoiceAgent extends Agent<Env> {
 
       const transcription = await this.env.AI.run(
         "@cf/openai/whisper-large-v3-turbo",
-        // Omitting language lets Whisper identify Arabic vs English from the audio.
-        { audio: audioBase64, task: "transcribe", vad_filter: false }
+        {
+          audio: audioBase64,
+          task: "transcribe",
+          language: "ar",
+          vad_filter: false,
+          initial_prompt: "الكلام باللهجة المصرية العامية. اكتب الكلام المنطوق بالعربية فقط، مع الحفاظ على أسماء الأشخاص والشركات كما نُطقت."
+        }
       ) as AITranscription;
 
-      const detectedLanguage = (
-        transcription?.transcription_info?.language ?? transcription?.language ?? ""
-      ).toLowerCase();
-      const languageProbability = transcription?.transcription_info?.language_probability;
-      const languageIsConfident =
-        typeof languageProbability !== "number" || languageProbability >= 0.55;
-      // Arabic Egyptian is the default; only switch to English when Whisper detects English.
-      this.responseLanguage =
-        detectedLanguage.startsWith("en") && languageIsConfident ? "en" : "ar";
+      // Arabic-only mode: never auto-detect or switch the conversation to another language.
+      this.responseLanguage = "ar";
 
       const transcript = (transcription?.text || "").trim();
       if (!transcript) {
@@ -329,8 +327,16 @@ export class MizanVoiceAgent extends Agent<Env> {
       if (!audioResponse.ok) {
         throw new Error("TTS audio download failed with HTTP " + audioResponse.status);
       }
+      const contentType = audioResponse.headers.get("content-type") || "";
+      if (contentType && !contentType.startsWith("audio/") && !contentType.includes("octet-stream")) {
+        throw new Error("TTS returned an unexpected content type: " + contentType);
+      }
       const audio = await audioResponse.arrayBuffer();
-      if (audio.byteLength) connection.send(audio);
+      if (audio.byteLength < 100) {
+        throw new Error("TTS returned an empty or incomplete audio payload");
+      }
+      connection.send(audio);
+      connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength }));
     } catch (ttsError) {
       console.error("TTS failed:", ttsError);
       connection.send(JSON.stringify({ type: "error", message: "تعذر تشغيل الرد الصوتي." }));
