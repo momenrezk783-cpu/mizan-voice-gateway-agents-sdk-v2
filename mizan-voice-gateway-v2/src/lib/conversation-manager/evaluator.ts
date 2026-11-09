@@ -2,7 +2,7 @@ import {
   containsBannedAddress,
   detectNonEgyptian,
   type ConversationState,
-  type PersonTitleContext
+  type PersonTitleContext,
 } from "./guard";
 import type { LearningCandidate, LearningEvaluation } from "./db";
 
@@ -36,7 +36,7 @@ export async function evaluateCall(
     role: "caller",
     callerName: state.caller.name,
     callerTitle: state.caller.title,
-    callerGender: state.caller.gender
+    callerGender: state.caller.gender,
   };
   const assistantTurns = state.transcript.filter((turn) => turn.role === "assistant");
   const bannedFound: string[] = [];
@@ -61,7 +61,7 @@ export async function evaluateCall(
     banned_words_found: bannedFound,
     dialect_violations: dialectViolations,
     failure_modes: [],
-    candidate_learnings: []
+    candidate_learnings: [],
   };
   if (!ai || assistantTurns.length === 0) return fallback;
 
@@ -69,19 +69,13 @@ export async function evaluateCall(
     .map((turn) => `[${turn.idx}] ${turn.role}: ${turn.content}`)
     .join("\n")
     .slice(0, 6000);
-  const prompt = `إنت مراجع جودة لمكالمات ميزان في مصر. قيّم المكالمة حسب طبيعية العامية المصرية، واحترام المتصل بدون «حضرتك» أو «يا فندم»، ودقة فهم الطلب، وعدم اختلاق وعود أو إجراءات.
-المكالمة:
-${transcript}
-النتيجة: ${state.outcome ?? "unknown"}
-أعد JSON فقط بهذا الشكل:
-{"score_overall":0,"score_dialect":0,"score_respect":0,"score_flow":0,"failure_modes":[],"candidate_learnings":[{"category":"dialect|flow|objection|domain_faq","rule_ar":"قاعدة قصيرة قابلة للتطبيق","rationale":"السبب"}]}
-القواعد المستخلصة يجب أن تكون محددة وآمنة، ولا تحتوي بيانات شخصية أو ألفاظًا ممنوعة.`;
+  const prompt = `إنت مراجع جودة لمكالمات ميزان في مصر. قيّم المكالمة حسب طبيعية العامية المصرية، واحترام المتصل بدقة، ووضوح التدفق.\n\nالمكالمة:\n${transcript}\nالنتيجة: ${state.outcome ?? "unknown"}\nأعد JSON فقط بهذا الشكل:\n{"score_overall":0,"score_dialect":0,"score_respect":0,"score_flow":0,"failure_modes":[],"candidate_learnings":[{"category":"dialect|flow|objection|domain_faq","rule_ar":"قاعدة قصيرة وقابلة للتطبيق","rationale":"سبب قصير"}]}\nالقواعد المستخلصة يجب أن تكون محددة وآمنة، ولا تحتوي بيانات شخصية أو ألفاظًا ممنوعة.`;
 
   try {
     const response = await ai.run(modelId as Parameters<Ai["run"]>[0], {
       messages: [{ role: "user", content: prompt }],
       max_tokens: 450,
-      temperature: 0.1
+      temperature: 0.1,
     }) as { response?: string };
     const raw = String(response?.response ?? "").trim();
     const match = raw.match(/\{[\s\S]*\}/u);
@@ -94,7 +88,7 @@ ${transcript}
       .map((candidate) => ({
         category: candidate.category,
         rule_ar: candidate.rule_ar.trim(),
-        rationale: String(candidate.rationale ?? "").slice(0, 300)
+        rationale: String(candidate.rationale ?? "").slice(0, 300),
       }));
     return {
       score_overall: clampScore(parsed.score_overall, fallback.score_overall),
@@ -104,7 +98,7 @@ ${transcript}
       banned_words_found: bannedFound,
       dialect_violations: dialectViolations,
       failure_modes: Array.isArray(parsed.failure_modes) ? parsed.failure_modes.map(String).slice(0, 10) : [],
-      candidate_learnings: candidates
+      candidate_learnings: candidates,
     };
   } catch (error) {
     console.error("Conversation evaluation failed:", error);

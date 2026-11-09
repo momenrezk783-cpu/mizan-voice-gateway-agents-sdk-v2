@@ -11,11 +11,6 @@ export interface LearningEvaluation {
   candidate_learnings: LearningCandidate[];
 }
 
-/**
- * Gateway already owns the learnings table. Its schema is intentionally
- * tenant-scoped (tenant_id NOT NULL), with rule text in text and category in source.
- * Do not create a parallel Mizan-source schema or alter the existing table.
- */
 export async function fetchActiveLearnings(
   db: D1Database,
   tenantId: string,

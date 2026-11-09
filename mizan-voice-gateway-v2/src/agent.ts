@@ -1,5 +1,5 @@
 // ============================================================================
-// Mizan Voice Agent — explicit WebSocket, STT, LLM and TTS pipeline
+// Mizan Voice Agent — explicit WebSocket, Deepgram STT, LLM and TTS pipeline
 // ============================================================================
 
 import { Agent, routeAgentRequest, type Connection } from "agents";
@@ -12,23 +12,29 @@ import {
   getTenantVoiceConfig,
   getTenantKnowledge,
   getHQElevenLabsConfig,
-  type HQElevenLabsConfig
+  type HQElevenLabsConfig,
 } from "./lib/tenant";
 import {
   extractCallerTitleAndName,
   resolvePersonAddressPolicy,
   sanitizeForSpeech,
   type ConversationState,
-  type PersonTitleContext
+  type PersonTitleContext,
 } from "./lib/conversation-manager/guard";
 import { evaluateCall } from "./lib/conversation-manager/evaluator";
 import {
   fetchActiveLearnings,
-  persistCallEvaluationAndLearnings
+  persistCallEvaluationAndLearnings,
 } from "./lib/conversation-manager/db";
 import { redactPII } from "./lib/crypto";
+import {
+  DeepgramStreamingSession,
+  computePcm16Rms,
+  normalizeToLinear16Pcm,
+  type DeepgramStreamConfig,
+} from "./lib/deepgram-stt";
 
-interface Env {
+export interface Env {
   DB: D1Database;
   TENANT_CONFIG: KVNamespace;
   AUDIO_BUCKET: R2Bucket;
@@ -40,12 +46,15 @@ interface Env {
   ADMIN_PASSKEY_HASH: string;
   PRIMARY_LLM: string;
   FALLBACK_LLM: string;
+  DEEPGRAM_API_KEY?: string;
+  DEEPGRAM_MODEL?: string;
+  DEEPGRAM_LANGUAGE?: string;
   ELEVENLABS_TTS_KEY?: string;
   ELEVENLABS_API_KEY?: string;
   ENVIRONMENT: string;
 }
 
-interface BackgroundMessage {
+export interface BackgroundMessage {
   type: "record_turn" | "end_session" | "record_usage";
   tenantSlug: string;
   sessionId: string;
@@ -57,14 +66,7 @@ interface BackgroundMessage {
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
-type AITranscription = {
-  text?: string;
-  language?: string;
-  transcription_info?: { language?: string; language_probability?: number };
-};
 export class MizanVoiceAgent extends Agent<Env> {
-  // Keep the active audio buffer and conversation in memory for the lifetime
-  // of this live call. The browser sends utterance boundaries as audio_end.
   static options = { hibernate: false };
 
   private tenantSlug: string | null = null;
@@ -77,16 +79,23 @@ export class MizanVoiceAgent extends Agent<Env> {
   private turnCount = 0;
   private callStartTime = 0;
   private initialized = false;
-  private audioChunks: Float32Array[] = [];
-  private audioSampleCount = 0;
+  private sessionClosed = false;
+  private activeConnection: Connection | null = null;
+  private deepgramSession: DeepgramStreamingSession | null = null;
+  private clientAudioFormat: "linear16" | "float32" = "linear16";
   private conversation: ChatMessage[] = [];
-  private processingAudio = false;
+  private processingTurn = false;
+  private agentSpeakingUntil = 0;
+  private lastProcessedTranscript = "";
+  private lastProcessedAt = 0;
   private responseLanguage: "ar" | "en" = "ar";
   private elevenLabsConfig: HQElevenLabsConfig | null = null;
   private personTitleContext: PersonTitleContext = { role: "caller" };
+  private deepgramConfigOverride?: DeepgramStreamConfig;
 
   async onStart() {
     this.callStartTime = Date.now();
+    this.sessionClosed = false;
     const parts = this.name.split(":");
     this.tenantSlug = parts[0] || null;
     this.sessionId = parts[1] || crypto.randomUUID();
@@ -111,7 +120,7 @@ export class MizanVoiceAgent extends Agent<Env> {
           model_id: "eleven_v4_turbo",
           stability: 0.4,
           similarity_boost: 0.9,
-          speed: 0.9
+          speed: 0.9,
         };
     if (this.tenantSlug === "mizan-hq" && !this.elevenLabsConfig) {
       console.error("HQ ElevenLabs config is missing; public-page voice settings are intentionally ignored");
@@ -142,115 +151,172 @@ export class MizanVoiceAgent extends Agent<Env> {
       connection.close(1011, "Agent initialization failed");
       return;
     }
-    connection.send(JSON.stringify({ type: "status", status: "ready", sampleRate: 16000, format: "mp3" }));
+
+    const deepgramKey = (this.env.DEEPGRAM_API_KEY || "").trim();
+    if (!deepgramKey) {
+      console.error("DEEPGRAM_API_KEY secret is not configured on mizan-voice-gateway");
+      connection.send(
+        JSON.stringify({
+          type: "error",
+          message: "مفتاح خدمة التعرف الصوتي (DEEPGRAM_API_KEY) غير مُعد في الخادم.",
+        })
+      );
+      connection.close(1011, "Missing DEEPGRAM_API_KEY secret");
+      return;
+    }
+
+    if (this.deepgramSession) {
+      this.deepgramSession.close();
+      this.deepgramSession = null;
+    }
+
+    this.sessionClosed = false;
+    this.activeConnection = connection;
+
+    this.deepgramSession = new DeepgramStreamingSession(
+      deepgramKey,
+      {
+        onInterimTranscript: (interimText) => {
+          if (this.sessionClosed || this.processingTurn) return;
+          if (interimText) {
+            try {
+              connection.send(JSON.stringify({ type: "status", status: "transcribing" }));
+            } catch {
+              // ignore closed socket
+            }
+          }
+        },
+        onFinalTranscript: async (finalText, _confidence, detectedLanguage) => {
+          await this.handleFinalTranscript(connection, finalText, detectedLanguage);
+        },
+        onError: (error) => {
+          console.error("Deepgram STT stream error:", error.message);
+        },
+      },
+      {
+        model: this.env.DEEPGRAM_MODEL || "nova-3",
+        language: this.env.DEEPGRAM_LANGUAGE || "ar-EG",
+        encoding: "linear16",
+        sampleRate: 16000,
+        channels: 1,
+        endpointingMs: 300,
+        utteranceEndMs: 1000,
+        ...this.deepgramConfigOverride,
+      }
+    );
+
+    void this.deepgramSession.connect();
+    connection.send(
+      JSON.stringify({
+        type: "status",
+        status: "ready",
+        sampleRate: 16000,
+        encoding: "linear16",
+        format: "mp3",
+      })
+    );
   }
 
   async onMessage(connection: Connection, message: string | ArrayBuffer | ArrayBufferView) {
+    if (this.sessionClosed) return;
     if (!this.initialized || !this.tenantSlug || !this.sessionId) {
       connection.send(JSON.stringify({ type: "error", message: "المساعد الصوتي غير جاهز." }));
       return;
     }
 
     if (typeof message === "string") {
-      let control: { type?: string };
+      let control: { type?: string; encoding?: string };
       try {
-        control = JSON.parse(message) as { type?: string };
+        control = JSON.parse(message) as { type?: string; encoding?: string };
       } catch {
         return;
       }
+
+      if (control.type === "audio_format") {
+        this.clientAudioFormat = control.encoding === "float32" ? "float32" : "linear16";
+        return;
+      }
+
       if (control.type === "audio_end") {
-        await this.flushAudio(connection);
+        this.deepgramSession?.finalizeUtterance();
       }
       return;
     }
 
-    const samples = this.toFloat32(message);
-    if (!samples.length) return;
-
-    this.audioChunks.push(samples);
-    this.audioSampleCount += samples.length;
-
-    // Flush long utterances periodically even if the browser has not emitted
-    // an end-of-utterance marker (for example, continuous speech).
-    if (this.audioSampleCount >= 16000 * 10) {
-      await this.flushAudio(connection);
+    if (!this.deepgramSession || this.activeConnection !== connection) {
+      return;
     }
-  }
 
-  private toFloat32(message: ArrayBuffer | ArrayBufferView): Float32Array {
-    let bytes: Uint8Array;
-    if (message instanceof ArrayBuffer) {
-      bytes = new Uint8Array(message);
-    } else {
-      bytes = new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
-    }
-    const usableBytes = bytes.byteLength - (bytes.byteLength % 4);
-    if (usableBytes === 0) return new Float32Array(0);
-    const copy = bytes.slice(0, usableBytes);
-    const values = new Float32Array(copy.buffer);
-    return values;
-  }
-
-  private async flushAudio(connection: Connection) {
-    if (this.processingAudio || this.audioSampleCount < 1600) return;
-    this.processingAudio = true;
-
-    const chunks = this.audioChunks;
-    this.audioChunks = [];
-    this.audioSampleCount = 0;
-
-    try {
-      const samples = new Float32Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
-      let offset = 0;
-      for (const chunk of chunks) {
-        samples.set(chunk, offset);
-        offset += chunk.length;
-      }
-
-      const wav = this.encodeWav(samples, 16000);
-      const audioBase64 = this.toBase64(wav);
-      connection.send(JSON.stringify({ type: "status", status: "transcribing" }));
-
-      const transcription = await this.env.AI.run(
-        "@cf/openai/whisper-large-v3-turbo",
-        {
-          audio: audioBase64,
-          task: "transcribe",
-          language: "ar",
-          vad_filter: false,
-        }
-      ) as AITranscription;
-
-      // Arabic-only mode: never auto-detect or switch the conversation to another language.
-      this.responseLanguage = "ar";
-
-      const transcript = (transcription?.text || "").trim();
-      if (!transcript) {
-        connection.send(JSON.stringify({ type: "status", status: "listening" }));
+    const now = Date.now();
+    if (this.processingTurn || now < this.agentSpeakingUntil) {
+      const pcm = normalizeToLinear16Pcm(message, this.clientAudioFormat);
+      const rms = computePcm16Rms(pcm);
+      if (this.processingTurn || rms < 0.08) {
         return;
       }
+      this.agentSpeakingUntil = 0;
+    }
 
-      connection.send(JSON.stringify({ type: "transcript", speaker: "caller", text: transcript }));
-      await this.respondToTranscript(connection, transcript);
+    this.deepgramSession.sendAudio(message, this.clientAudioFormat);
+  }
+
+  private async handleFinalTranscript(
+    connection: Connection,
+    transcript: string,
+    _detectedLanguage: "ar" | "en"
+  ) {
+    if (this.sessionClosed || !this.initialized || !this.tenantSlug || !this.sessionId) {
+      return;
+    }
+
+    const cleaned = transcript.trim();
+    if (!cleaned) return;
+
+    const now = Date.now();
+    if (this.processingTurn) {
+      return;
+    }
+    if (cleaned === this.lastProcessedTranscript && now - this.lastProcessedAt < 2000) {
+      return;
+    }
+
+    this.processingTurn = true;
+    this.lastProcessedTranscript = cleaned;
+    this.lastProcessedAt = now;
+
+    this.responseLanguage = "ar";
+
+    try {
+      connection.send(JSON.stringify({ type: "transcript", speaker: "caller", text: cleaned }));
+      await this.respondToTranscript(connection, cleaned);
     } catch (error) {
       console.error("Voice pipeline failed:", error);
-      connection.send(JSON.stringify({ type: "error", message: "حصلت مشكلة أثناء معالجة الصوت. اتكلم مرة تانية من فضلك." }));
+      if (!this.sessionClosed) {
+        try {
+          connection.send(
+            JSON.stringify({
+              type: "error",
+              message: "حصلت مشكلة أثناء معالجة الصوت. اتكلم مرة تانية من فضلك.",
+            })
+          );
+        } catch {
+          // Client may have disconnected
+        }
+      }
     } finally {
-      this.processingAudio = false;
-      if (this.audioSampleCount >= 1600) {
-        await this.flushAudio(connection);
-      } else {
+      this.processingTurn = false;
+      if (!this.sessionClosed) {
         try {
           connection.send(JSON.stringify({ type: "status", status: "listening" }));
         } catch {
-          // The client may have disconnected while the model was running.
+          // Client may have disconnected
         }
       }
     }
   }
 
   private async respondToTranscript(connection: Connection, transcript: string) {
-    if (!this.tenantSlug || !this.sessionId) return;
+    if (this.sessionClosed || !this.tenantSlug || !this.sessionId) return;
     const turnStart = Date.now();
     this.turnCount++;
     const callerIdentity = extractCallerTitleAndName(transcript, this.personTitleContext);
@@ -258,7 +324,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       role: "caller",
       callerName: callerIdentity.name,
       callerTitle: callerIdentity.title,
-      callerGender: callerIdentity.gender
+      callerGender: callerIdentity.gender,
     };
 
     await this.env.BACKGROUND_QUEUE.send({
@@ -270,7 +336,15 @@ export class MizanVoiceAgent extends Agent<Env> {
       turnIndex: this.turnCount,
     });
 
-    const systemPrompt = this.buildSystemPrompt();
+    const activeLearnings = await fetchActiveLearnings(this.env.DB, this.tenantSlug, 6);
+    const addressPolicy = resolvePersonAddressPolicy(this.personTitleContext);
+    const learningBlock = activeLearnings.length
+      ? "\n\n--- قواعد تعلمها المحرك من المكالمات الناجحة ---\n" + activeLearnings.map((rule) => "- " + rule).join("\n")
+      : "";
+    const personBlock = "\n\n--- مخاطبة المتصل ---\n" +
+      "صيغة المخاطبة المناسبة: " + addressPolicy.preferredAddress + ". " +
+      "ممنوع استخدام حضرتك أو يا فندم أو تخمين لقب مهني غير معلن.";
+    const systemPrompt = this.buildSystemPrompt(this.responseLanguage) + personBlock + learningBlock;
     const recentMessages = this.conversation.slice(-10);
     let reply = "";
 
@@ -298,18 +372,16 @@ export class MizanVoiceAgent extends Agent<Env> {
         reply = result.text.trim();
       } catch (fallbackError) {
         console.error("Fallback LLM failed:", fallbackError);
-        reply =
-          this.responseLanguage === "en"
-            ? "Sorry, I'm having a temporary technical issue. Could you please try again?"
-            : "عذراً، حصلت مشكلة تقنية مؤقتة. ممكن تحاول تاني؟";
+        reply = this.responseLanguage === "en"
+          ? "Sorry, I'm having a temporary technical issue. Could you please try again?"
+          : "عذراً، حصلت مشكلة تقنية مؤقتة. ممكن تحاول تاني؟";
       }
     }
 
     if (!reply) {
-      reply =
-        this.responseLanguage === "en"
-          ? "Could you please clarify what you need?"
-          : "ممكن توضح لي طلبك أكتر؟";
+      reply = this.responseLanguage === "en"
+        ? "Could you please clarify what you need?"
+        : "ممكن توضح لي طلبك أكتر؟";
     }
     reply = sanitizeForSpeech(reply, this.personTitleContext);
     if (!reply) reply = "ممكن توضح لي طلبك أكتر؟";
@@ -335,16 +407,23 @@ export class MizanVoiceAgent extends Agent<Env> {
       indexes: [this.tenantSlug],
     });
 
+    if (this.sessionClosed) return;
+
     connection.send(JSON.stringify({ type: "transcript", speaker: "agent", text: reply }));
     connection.send(JSON.stringify({ type: "status", status: "speaking" }));
 
     try {
       const audio = await this.synthesizeElevenLabsAudio(reply);
+      if (this.sessionClosed) return;
+      const estimatedDurationMs = Math.max(600, Math.round((audio.byteLength / 16000) * 1000) + 350);
+      this.agentSpeakingUntil = Date.now() + estimatedDurationMs;
       connection.send(audio);
       connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength }));
     } catch (ttsError) {
       console.error("ElevenLabs TTS failed:", ttsError);
-      connection.send(JSON.stringify({ type: "error", message: "تعذر تشغيل صوت ميزان من إعدادات HQ." }));
+      if (!this.sessionClosed) {
+        connection.send(JSON.stringify({ type: "error", message: "تعذر تشغيل صوت ميزان من إعدادات HQ." }));
+      }
     }
   }
 
@@ -367,7 +446,7 @@ export class MizanVoiceAgent extends Agent<Env> {
           method: "POST",
           headers: {
             "xi-api-key": apiKey,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({
             text,
@@ -377,10 +456,10 @@ export class MizanVoiceAgent extends Agent<Env> {
               stability: config.stability,
               similarity_boost: config.similarity_boost,
               speed: config.speed,
-              use_speaker_boost: true
-            }
+              use_speaker_boost: true,
+            },
           }),
-          signal: controller.signal
+          signal: controller.signal,
         });
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
@@ -415,58 +494,38 @@ export class MizanVoiceAgent extends Agent<Env> {
     throw new Error(lastError);
   }
 
-  private encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
-    const bytesPerSample = 2;
-    const dataLength = samples.length * bytesPerSample;
-    const buffer = new ArrayBuffer(44 + dataLength);
-    const view = new DataView(buffer);
-    const writeText = (position: number, value: string) => {
-      for (let i = 0; i < value.length; i++) view.setUint8(position + i, value.charCodeAt(i));
-    };
-
-    writeText(0, "RIFF");
-    view.setUint32(4, 36 + dataLength, true);
-    writeText(8, "WAVE");
-    writeText(12, "fmt ");
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * bytesPerSample, true);
-    view.setUint16(32, bytesPerSample, true);
-    view.setUint16(34, 16, true);
-    writeText(36, "data");
-    view.setUint32(40, dataLength, true);
-
-    let position = 44;
-    for (let i = 0; i < samples.length; i++) {
-      const sample = Math.max(-1, Math.min(1, samples[i]));
-      view.setInt16(position, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-      position += 2;
-    }
-    return buffer;
-  }
-
-  private toBase64(buffer: ArrayBuffer): string {
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    const chunkSize = 0x8000;
-    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-      binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
-    }
-    return btoa(binary);
-  }
-
-  private buildSystemPrompt(): string {
+  private buildSystemPrompt(language: "ar" | "en"): string {
     let prompt = this.globalPrompt;
     if (this.industryGuard) prompt += "\n\n--- قواعد الأمان ---\n" + this.industryGuard;
     if (this.tenantCustomization) prompt += "\n\n--- تعليمات خاصة ---\n" + this.tenantCustomization;
     if (this.knowledgeContext) prompt += "\n\n--- معلومات النشاط ---\n" + this.knowledgeContext;
     if (this.escalationPhone) prompt += "\n\nرقم التحويل/الطوارئ: " + this.escalationPhone;
+
+    if (language === "en") {
+      prompt +=
+        "\n\n--- Response language (highest priority) ---\n" +
+        "The caller is speaking English. Reply in clear, natural English only. " +
+        "Do not switch to Arabic or mix languages unless the caller switches to Arabic. " +
+        "Keep the response concise, friendly, and professional.";
+    } else {
+      prompt +=
+        "\n\n--- لغة الرد (أولوية قصوى) ---\n" +
+        "تحدث باللهجة المصرية فقط بأسلوب ودود ومهني وموجز. " +
+        "إذا انتقل المتصل إلى الإنجليزية، اتبع لغته في الرد.";
+    }
     return prompt;
   }
 
   async onClose(_connection: Connection, _code: number, _reason: string, _wasClean: boolean) {
+    if (this.sessionClosed) return;
+    this.sessionClosed = true;
+    this.activeConnection = null;
+
+    if (this.deepgramSession) {
+      this.deepgramSession.close();
+      this.deepgramSession = null;
+    }
+
     if (!this.tenantSlug || !this.sessionId) return;
 
     await this.env.BACKGROUND_QUEUE.send({
@@ -489,7 +548,7 @@ export class MizanVoiceAgent extends Agent<Env> {
           name: this.personTitleContext.callerName ?? undefined,
           title: this.personTitleContext.callerTitle ?? undefined,
           gender: this.personTitleContext.callerGender ?? "unknown",
-          isReturning: false
+          isReturning: false,
         },
         transcript: this.conversation.map((turn, idx) => ({
           idx,
@@ -497,9 +556,9 @@ export class MizanVoiceAgent extends Agent<Env> {
           content: redactPII(turn.content)
             .replace(/\b\d{14}\b/gu, "[رقم قومي]")
             .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, "[بريد إلكتروني]"),
-          ts: this.callStartTime + idx * 1000
+          ts: this.callStartTime + idx * 1000,
         })),
-        outcome: "caller_hung_up"
+        outcome: "caller_hung_up",
       };
       try {
         const evaluation = await evaluateCall(this.env.AI, this.env.PRIMARY_LLM, evalState);
@@ -512,7 +571,7 @@ export class MizanVoiceAgent extends Agent<Env> {
         console.info("Conversation evaluation saved", {
           sessionId: this.sessionId,
           score: evaluation.score_overall,
-          learningCount: evaluation.candidate_learnings.length
+          learningCount: evaluation.candidate_learnings.length,
         });
       } catch (error) {
         console.error("Conversation learning persistence failed:", error);

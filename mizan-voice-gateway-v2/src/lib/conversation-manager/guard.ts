@@ -32,7 +32,7 @@ const TITLES = [
   "دكتورة", "دكتوره", "دكتور", "باشمهندسة", "باشمهندسه",
   "باشمهندس", "مهندسة", "مهندسه", "مهندس", "أستاذة",
   "أستاذه", "استاذة", "استاذه", "أستاذ", "استاذ", "مستر",
-  "كابتن", "شيخ"
+  "كابتن", "شيخ",
 ] as const;
 
 function canonicalTitle(value: string | null | undefined): string | null {
@@ -59,7 +59,7 @@ export function extractCallerTitleAndName(
   const result = {
     title: existing.callerTitle ?? null,
     name: existing.callerName ?? null,
-    gender: existing.callerGender ?? "unknown" as CallerGender
+    gender: existing.callerGender ?? ("unknown" as CallerGender),
   };
   const text = String(utterance ?? "").trim();
   if (!text) return result;
@@ -107,14 +107,14 @@ const BANNED_PATTERNS = [
   /(?:^|[\s،,.!؟])(?:فندم|أفندم|افندم)(?=$|[\s،,.!؟])/gu,
   /حضرتك/gu, /سيادتك/gu, /سعادتك/gu,
   /يا\s*(?:باشا|بيه|بك|هانم|معلم|زعيم|غالي|ريس)(?=$|[\s،,.!؟])/gu,
-  /طال\s*عمرك/gu, /تحت\s*أمرك/gu, /أؤمرني/gu
+  /طال\s*عمرك/gu, /تحت\s*أمرك/gu, /أؤمرني/gu,
 ];
 
 const NON_EGYPTIAN_MARKERS = [
   "شلونك", "وش تبي", "ابتغي", "هلا والله", "يعطيك العافية",
   "تكرم عينك", "شو بدك", "كيفك", "هلق", "هلأ", "حياك الله",
   "طال عمرك", "ماذا تريد", "كيف يمكنني مساعدتك", "يرجى الانتظار",
-  "سوف أقوم", "حسناً"
+  "سوف أقوم", "حسناً",
 ];
 
 export function containsBannedAddress(text: string, context: PersonTitleContext = {}): boolean {
