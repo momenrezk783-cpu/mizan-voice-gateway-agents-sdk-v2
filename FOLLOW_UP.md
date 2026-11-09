@@ -1,5 +1,7 @@
 # FOLLOW_UP
 
-Fixed the public voice page startup race and the nested template-literal syntax error that blocked Worker compilation; the WebSocket URL now uses safe string concatenation inside the generated HTML. PR #2 was merged into `main` (merge commit `2fa183dff4bed8a8405944523139d6214ece77b3`); the Cloudflare deploy workflow is configured to run on pushes to `main`, but the new deployment has not yet been verified and browser/device integration testing remains outstanding.
+The public voice page startup-race and generated-JavaScript syntax fixes were merged in PR #2; browser/device audio integration testing remains outstanding.
 
-Fixed the D1 `undefined` bind in `getIndustryGuard`: missing or legacy-cached tenant industry values now safely resolve to the fail-safe `healthcare` guard, matching the database migration default, and both slug/domain tenant resolvers normalize cached and database records. Changes are on `fix/industry-guard-undefined`; static source review passed, but runtime tests and deployment are still pending.
+The D1 undefined-bind guard was merged in PR #5 (merge commit `8b96b7abebe78f0147cb42b55c7ea861adcf86f0`) and deployed successfully by Actions run #19 as Worker version `17d56d13-4229-444b-a02b-e15c3a954535`.
+
+Live Worker logs show the prior `D1_TYPE_ERROR` stopped after deployment, but `MizanVoiceAgent.onStart` now fails inserting `call_sessions` because KV contains active tenant `mizan-hq` while D1 has no matching `tenants.slug` row (only `al-nour` exists); next step is to reconcile the tenant record/cache, then retest, while a separate `mizan-consult` cron error reports missing `pilot_status`.
