@@ -1,7 +1,7 @@
 # FOLLOW_UP
 
-On branch `fix/force-arabic-stt-restore-agent-audio`, forced Cloudflare Whisper transcription to Arabic (`ar`) only with an Egyptian Arabic context prompt, and fixed the reply pipeline's observability: validate downloaded TTS audio, report audio-send status, surface server errors in the browser, and queue playback to avoid overlapping replies.
+On branch `feat/hq-elevenlabs-conversation-engine`, the Gateway now reads ElevenLabs voice settings only from HQ's `_portal_assets.elevenlabs_config` record (voice `JTMaHm6sHVI3NZgPaWDz`, model `eleven_v4_turbo`, speed 0.9, stability 0.4, similarity 0.9), sends MP3 audio through ElevenLabs, and integrates the active caller guard, tenant-scoped learning, and post-call evaluation modules.
 
-Static source checks confirm the forced-language argument, removal of auto-detection, TTS payload validation, and browser playback/error handling; package scripts provide no test/build command beyond `wrangler types`, and no local build or real browser/device audio test has been run.
+Whisper Arabic transcription (`language: ar` with the Egyptian context prompt), the existing LLM primary/fallback flow, WebSocket protocol, and browser MP3 playback remain unchanged; learning persistence uses the existing Gateway D1 schema, and the evaluator redacts phone, national-ID, and email patterns before model review.
 
-No PR has been opened and no deployment or runtime configuration was changed; next step is to run `wrangler types` and test an actual Arabic call, then inspect the surfaced TTS/playback error if audio still fails.
+Static source checks confirmed these wiring and compatibility invariants, but `wrangler types`, a live ElevenLabs request, and a real browser/device call were not run; no PR, deployment, secret, or runtime setting was changed, and live TTS requires explicit approval to add the `ELEVENLABS_TTS_KEY` Worker secret.
