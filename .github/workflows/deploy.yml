@@ -5,10 +5,16 @@ on:
     branches:
       - main
       - feat/hq-elevenlabs-conversation-engine
+    paths:
+      - 'mizan-voice-gateway-v2/**'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: mizan-voice-gateway-production
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -28,8 +34,8 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./mizan-voice-gateway-v2
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Deploy to Cloudflare
         working-directory: ./mizan-voice-gateway-v2
-        run: npx wrangler deploy
+        run: npx wrangler deploy --config wrangler.toml
