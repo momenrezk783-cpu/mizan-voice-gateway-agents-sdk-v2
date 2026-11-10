@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+const status=spawnSync(process.execPath,['scripts/release-gate.mjs'],{encoding:'utf8'});
+assert.equal(status.status,2,'Unverified release MUST be refused');
+assert.match(status.stdout,/NO-GO/);
+assert.match(status.stdout,/SIP\/PBX/);
+const source=readFileSync('scripts/release-gate.mjs','utf8');
+assert.ok(!source.includes('wrangler deploy'));
+console.log('PASS fail-closed offline release gate refuses missing cloud, SIP, billing evidence');

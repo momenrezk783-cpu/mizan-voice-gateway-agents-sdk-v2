@@ -70,3 +70,12 @@ Evidence recorded 2026-11-10 18:33 UTC. Never conflate local/remote GitHub check
 - `npm test`: exit 0 from detached process, stored in `docs/evidence/sprint11-exit.txt`; log `docs/evidence/sprint11-local.log`.
 - Trusted-PBX route tests reject unknown peers, invalid numbers and duplicate/ambiguous mapping. The test assumes an upstream trusted identity; it does **not** establish authentication or SIP interoperability.
 - SEO test verifies canonical tags and non-public paths omitted from sitemap. No search-engine indexing measurement.
+
+## E-009 — Sprint 12 local QA and release gating
+
+- Full regression `npm test` exit **0** in `docs/evidence/sprint12-exit.txt`; raw output `docs/evidence/sprint12-local.log`.
+- Release gate `npm run release:gate` exit **2** (NO-GO) in `docs/evidence/release-gate-exit.txt` and raw log.
+- Build `npm run build` exit **2** (BLOCKED; missing dependencies) in `docs/evidence/build-check-exit.txt` and raw log.
+- Staging preflight `npm run staging:check` exit **2** (BLOCKED; staging config not provisioned) in `docs/evidence/staging-check-exit.txt` and raw log.
+- SQLite synthetic smoke: 100 tenants, 5,000 call records, 1,000 requests. This does not represent 100 concurrent live calls.
+- Release decision: `docs/RELEASE_GO_NO_GO.md` => **NO-GO**, explicit external approval required before any staging or production deploy.

@@ -1,17 +1,25 @@
 # Mizan — Project Source of Truth
 
-_Last verified: 2026-11-10 18:33 UTC. Status: **development snapshot only**._
+_Last reviewed: 2026-11-10, after isolated local Sprints 7–12. Status: **development / laboratory snapshot only — NO-GO for production**._
 
 > Read this file, `DECISIONS.md`, `SPRINT_LOG.md` and `docs/TEST_EVIDENCE.md` before starting a sprint. The code and test logs, **not conversational claims**, determine completion.
 
 ## Authoritative working copy
 
-- Current working tree: the isolated copy delivered as `mizan-voice-gateway-v2-six-sprints.zip`, plus this documentation/checkpoint.
+- Current working tree: independent Git continuation of the six-sprint ZIP, now containing local development implementation for Sprints 7–12. The ZIP remains the frozen parent baseline, not the current source.
 - Source ZIP SHA-256: `d026f62a56be584271ca36a2ff2ff93502f4cc0c5c3f575714f0dfd504741f1a`.
 - Before adding documentation, **all 39 file contents** in this working tree matched the ZIP byte-for-byte.
 - Git history restored from the independently verified local Sprint 1–6 working repository (no remote configured). Pre-documentation HEAD: `8074bf671ef80ccb786fb499c192a566f10069fd`.
 - The working tree must not be described as "same as GitHub main". The remotely cloned GitHub public repository reported HEAD `671ebcc` on 2026-11-10, and its source/test structure differs from the six-sprint ZIP.
 - Never push to `main` without independent approval: `.github/workflows/deploy.yml` automatically deploys on pushes to `main`.
+
+## Current continuation — Sprints 7–12
+
+- Development work has progressed locally through six continuation commits, starting with `e417a1e` (Sprint 7) and ending at the latest commit shown by `git log` (Sprint 12). See `SPRINT_LOG.md` and paired deliverables `docs/SPRINT_7_8_REPORT.md`, `docs/SPRINT_9_10_REPORT.md`, and `docs/SPRINT_11_12_REPORT.md`.
+- Last verified `npm test` **passed**: `docs/evidence/sprint12-exit.txt` = `0`; includes 18/18 conversation tests, audio lab, safe SIP mapping, CRM SQL isolation, usage reports, and static UI tests.
+- The local test success does **not** override `docs/RELEASE_GO_NO_GO.md`: **NO-GO**. `npm run release:gate`, `npm run build`, and `npm run staging:check` all returned exit `2` for documented blockers.
+- Files in `docs/SNAPSHOT_SPRINT6.sha256` intentionally refer to the original frozen Sprint 6 snapshot; comparisons against the now-modified Sprint 7–12 source should fail. Never edit those source checksums retroactively.
+- Public GitHub repository was **not pushed or reconciled**. No deployment to Cloudflare occurred.
 
 ## What is verified
 

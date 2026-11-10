@@ -63,3 +63,10 @@ This is a verification ledger, not an optimistic project plan. For historical de
 - Added public homepage metadata, robots and sitemap excluding private routes.
 - `npm test`: PASS exit 0, evidence `docs/evidence/sprint11-local.log` with `docs/evidence/sprint11-exit.txt` containing 0 (detached runner used to avoid tool request timeouts).
 - Remaining: real PBX gateway, production authentication, lawful carrier routing, booking provider, semantic search, and customer onboarding; not claimed completed.
+
+## Sprint 12 continuation — 2026-11-10 (local)
+
+- Starting commit `fcd83cb`; implemented fail-closed offline release gate, SQLite-only multi-tenant volume smoke test, documented full staging and production GO/NO-GO checks.
+- `npm test` PASS (exit 0) from `docs/evidence/sprint12-exit.txt` and log `docs/evidence/sprint12-local.log`.
+- `npm run release:gate` BLOCKED exit 2; `npm run build` BLOCKED exit 2; `npm run staging:check` BLOCKED exit 2. These are correctly reported as NO-GO, not passing tests.
+- No full E2E on Cloudflare/PBX, load/stress, real billing sandbox or production deploy. External/provider-gated roadmap deliverables remain incomplete.

@@ -1,0 +1,5 @@
+
+> mizan-voice-gateway@2.0.0 build
+> node scripts/verify-build.mjs
+
+BLOCKED: Wrangler dependencies not installed. npm ci with a reviewed lockfile is required.

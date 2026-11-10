@@ -1,0 +1,12 @@
+
+> mizan-voice-gateway@2.0.0 release:gate
+> node scripts/release-gate.mjs
+
+BLOCKED: Pinned dependency lockfile — Review and commit npm lockfile after dependency resolution
+BLOCKED: Installed Wrangler dependencies — Install with npm ci in isolated build environment
+BLOCKED: Provisioned staging config — Provision staging-only D1/KV/queue/worker and complete config guard
+BLOCKED: Verified isolated Wrangler dry-run — Run bundle/type validation and attach validated artifact
+BLOCKED: Live end-to-end voice quality evidence — Run authorized Deepgram/ElevenLabs/Workers AI tests and record latency
+BLOCKED: Licensed SIP/PBX interoperability evidence — Run controlled authenticated PBX bridge test and regulatory/provider review
+BLOCKED: Billing sandbox / payment review — Select and verify sandbox gateway, pricing and accounting policies
+NO-GO: 7 prerequisite evidence files absent; no deployment permitted.

@@ -13,6 +13,10 @@ Decisions apply to the isolated development copy; they do not authorize producti
 | D-007 | Pending implementation | Keep sensitive caller audio/phone and tenant identifiers out of routine diagnostics. | Privacy/retention and licensing need verification before real calls. |
 | D-008 | Pending validation | Staging deploy must be fully isolated (resource IDs/domains/secrets/CI paths) and reversible. | No implicit production-side operations, even while diagnosing build failures. |
 
+| D-009 | Accepted | Release remains **NO-GO** until separate isolated staging, real voice/PBX, dependency build and payment/privacy gates have auditable evidence. | Local regressions are not an operational readiness guarantee. |
+| D-010 | Accepted | Offer only read-only estimated usage in the portal; no approved prices or payment activation. | Avoid misleading billing claims or unapproved charges. |
+| D-011 | Accepted | Treat the telephony codec/routing components as a lab-only BYON adapter, not as a working SIP trunk. | Requires separate authenticated signalling/media gateway and permitted carrier provisioning. |
+
 ## Known conflicts to resolve
 
 `README.md` describes Workers AI Flux/TTS without external keys, but the source/test snapshot contains external Deepgram and ElevenLabs integrations. Until source and live configuration are verified, treat README descriptions as **historical**, not evidence of the running environment. Do not overwrite real deploy configuration based on README alone.
@@ -20,3 +24,4 @@ Decisions apply to the isolated development copy; they do not authorize producti
 ## Decision change process
 
 Append a new dated decision or supersede an ID with rationale, code/tests affected, and the approving actor. Do not silently rewrite prior accepted decisions.
+

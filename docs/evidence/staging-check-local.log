@@ -1,0 +1,5 @@
+
+> mizan-voice-gateway@2.0.0 staging:check
+> node scripts/check-staging-config.mjs
+
+BLOCKED: wrangler.staging.toml is missing. Copy the staging example and provision separate resources.
