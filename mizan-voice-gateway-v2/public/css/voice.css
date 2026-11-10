@@ -185,3 +185,9 @@ body {
   .mic.connecting { animation: none; }
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* Shared bilingual control on the public voice page. */
+.mz-language-toggle { display:inline-flex;align-items:center;justify-content:center;min-width:82px;min-height:38px;padding:7px 12px;border:1px solid #d7e0ec;border-radius:11px;background:#fff;color:#17365d;font:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap; }
+.mz-language-toggle:focus-visible { outline:3px solid rgba(37,99,235,.32);outline-offset:2px; }
+html[dir="ltr"] .vp,html[dir="ltr"] .top-row { direction:ltr; }
+html[dir="ltr"] .top-row .lg { margin-inline-end:auto; }
