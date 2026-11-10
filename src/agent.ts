@@ -684,7 +684,13 @@ export class MizanVoiceAgent extends Agent<Env> {
       const estimatedDurationMs = Math.max(600, Math.round((audio.byteLength / 16000) * 1000) + 350);
       this.agentSpeakingUntil = Date.now() + estimatedDurationMs;
       connection.send(audio);
-      connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength }));
+      const timeToAudioMs = Date.now() - turnStart;
+      this.env.VOICE_METRICS?.writeDataPoint({
+        blobs: [this.tenantSlug, this.sessionId, "turn_to_audio"],
+        doubles: [timeToAudioMs],
+        indexes: [this.tenantSlug]
+      });
+      connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength, timeToAudioMs }));
     } catch (ttsError) {
       console.error("ElevenLabs TTS failed:", ttsError);
       if (!this.sessionClosed) {

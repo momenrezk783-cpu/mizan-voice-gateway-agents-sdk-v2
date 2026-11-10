@@ -113,11 +113,7 @@
           </div>
           <div class="card">
             <div class="ch"><div><h3>الاستفسارات الأكثر تكراراً</h3><p>نسبة من إجمالي الاستفسارات</p></div></div>
-            <div class="fq"><div class="fr"><span>مواعيد العمل</span><b>86%</b></div><div class="tr"><div class="fl" style="width:86%"></div></div></div>
-            <div class="fq"><div class="fr"><span>حجز موعد أو طلب خدمة</span><b>74%</b></div><div class="tr"><div class="fl" style="width:74%"></div></div></div>
-            <div class="fq"><div class="fr"><span>مواقع الفروع</span><b>58%</b></div><div class="tr"><div class="fl" style="width:58%"></div></div></div>
-            <div class="fq"><div class="fr"><span>الخدمات والباقات المتوفرة</span><b>47%</b></div><div class="tr"><div class="fl" style="width:47%"></div></div></div>
-            <div class="fq"><div class="fr"><span>سياسة الإلغاء أو التعديل</span><b>31%</b></div><div class="tr"><div class="fl" style="width:31%"></div></div></div>
+            <p class="sub">توزيع الاستفسارات حسب الموضوع غير متاح حتى يتم تفعيل تصنيف موثوق للمكالمات.</p>
           </div>
         </section>
 
@@ -131,10 +127,10 @@
           </div>
           <div class="card" id="status-card">
             <div class="ch" style="margin-bottom:0"><div><h3>حالة المساعد</h3></div></div>
-            <div class="stt"><span class="dot"></span><span id="st-pill">نشط ويعمل بشكل طبيعي</span></div>
-            <div class="mt"><span>عدد مقالات قاعدة المعرفة</span><b id="st-kcount">248</b></div>
-            <div class="mt"><span>متوسط سرعة الاستجابة</span><b id="st-lat">340 ms</b></div>
-            <div style="margin-top:18px"><div class="fr"><span>نسبة جاهزية النظام</span><b>99.9%</b></div><div class="tr"><div class="fl" style="width:99.9%"></div></div></div>
+            <div class="stt"><span class="dot"></span><span id="st-pill">حالة المكالمات الصوتية غير مقاسة</span></div>
+            <div class="mt"><span>عدد مقالات قاعدة المعرفة</span><b id="st-kcount">—</b></div>
+            <div class="mt"><span>متوسط سرعة الاستجابة</span><b id="st-lat">غير متاح</b></div>
+            <p class="sub" style="margin-top:18px">نسبة الجاهزية تتطلب مراقبة فعلية وليست متاحة حاليًا.</p>
           </div>
         </section>
       </div>
@@ -143,10 +139,10 @@
       <div id="page-clients" class="page">
         <div class="hd"><div><h1>العملاء والطلبات المسجلة</h1><p>قائمة المتصلين والعملاء الذين طلبوا حجز موعد أو خدمة عبر المساعد الصوتي</p></div><button class="btn o" onclick="exportSessionsCSV()">تصدير بيانات العملاء</button></div>
         <div class="g4">
-          <div class="card"><div class="kl">إجمالي العملاء المتفاعلين</div><div class="kv" id="cl-total">3,215</div></div>
-          <div class="card"><div class="kl">طلبات وحجوزات مؤكدة</div><div class="kv" id="cl-booked">1,480</div></div>
-          <div class="card"><div class="kl">قيد المتابعة</div><div class="kv">24</div></div>
-          <div class="card"><div class="kl">حماية البيانات (AES-GCM)</div><div class="kv">100%</div></div>
+          <div class="card"><div class="kl">إجمالي العملاء المتفاعلين</div><div class="kv" id="cl-total">—</div></div>
+          <div class="card"><div class="kl">طلبات وحجوزات مؤكدة</div><div class="kv" id="cl-booked">—</div></div>
+          <div class="card"><div class="kl">طلبات مواعيد غير مؤكدة</div><div class="kv" id="cl-pending">—</div></div>
+          <div class="card"><div class="kl">حماية البيانات</div><div class="kv">تشفير AES-GCM جزئي</div></div>
         </div>
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
@@ -164,10 +160,10 @@
       <div id="page-calls" class="page">
         <div class="hd"><div><h1>المكالمات</h1><p>سجل كامل لمكالمات مساعدك الصوتي وتفريغ المحادثات</p></div><button class="btn o" onclick="exportSessionsCSV()">تصدير السجل</button></div>
         <div class="g4">
-          <div class="card"><div class="kl">مكالمات مسجلة</div><div class="kv" id="c-kpi-total">412</div></div>
-          <div class="card"><div class="kl">متوسط المدة</div><div class="kv">01:42</div></div>
-          <div class="card"><div class="kl">نسبة الرد الآلي</div><div class="kv">94.6%</div></div>
-          <div class="card"><div class="kl">مكالمات فائتة</div><div class="kv" id="c-kpi-missed">17</div></div>
+          <div class="card"><div class="kl">مكالمات مسجلة</div><div class="kv" id="c-kpi-total">—</div></div>
+          <div class="card"><div class="kl">متوسط المدة (المكالمات المكتملة)</div><div class="kv" id="c-kpi-duration">—</div></div>
+          <div class="card"><div class="kl">نسبة المكالمات المكتملة</div><div class="kv" id="c-kpi-completed-rate">—</div></div>
+          <div class="card"><div class="kl">مكالمات فائتة</div><div class="kv" id="c-kpi-missed">—</div></div>
         </div>
         <div class="g2">
           <div class="card">
@@ -245,12 +241,12 @@
 
       <!-- 5. PERFORMANCE -->
       <div id="page-performance" class="page">
-        <div class="hd"><div><h1>أداء المساعد وضوابط الأمان</h1><p>مؤشرات سرعة الاستجابة الصوتية والالتزام بضوابط القطاع وقانون حماية البيانات</p></div><span class="bd ok">النظام متوافق مع قانون 151 لسنة 2020</span></div>
+        <div class="hd"><div><h1>أداء المساعد وضوابط الأمان</h1><p>مؤشرات سرعة الاستجابة الصوتية والالتزام بضوابط القطاع وقانون حماية البيانات</p></div><span class="bd wip">الامتثال القانوني يتطلب مراجعة مستقلة</span></div>
         <div class="g4">
-          <div class="card"><div class="kl">متوسط زمن الاستجابة</div><div class="kv" id="perf-lat">340 ms</div></div>
-          <div class="card"><div class="kl">دقة التعرف الصوتي (Deepgram STT)</div><div class="kv">96.8%</div></div>
-          <div class="card"><div class="kl">تعمية أرقام الهواتف (PII)</div><div class="kv">100%</div></div>
-          <div class="card"><div class="kl">جاهزية الخدمة (Uptime)</div><div class="kv">99.9%</div></div>
+          <div class="card"><div class="kl">متوسط زمن الاستجابة</div><div class="kv" id="perf-lat">غير متاح</div></div>
+          <div class="card"><div class="kl">دقة التعرف الصوتي (Deepgram STT)</div><div class="kv">غير مقاسة</div></div>
+          <div class="card"><div class="kl">إخفاء بيانات المتصل (PII)</div><div class="kv">يتطلب تدقيقًا</div></div>
+          <div class="card"><div class="kl">جاهزية الخدمة (Uptime)</div><div class="kv">غير مقاسة</div></div>
         </div>
         <div class="g2-eq">
           <div class="card">
@@ -264,9 +260,9 @@
           <div class="card">
             <h3>مؤشرات الجودة الصوتية</h3>
             <p class="sub" style="margin-bottom:16px">الأداء المباشر على شبكة Cloudflare Edge</p>
-            <div class="fq"><div class="fr"><span>سرعة تحويل الصوت إلى نص (Deepgram Nova-3)</span><b>97%</b></div><div class="tr"><div class="fl" style="width:97%"></div></div></div>
-            <div class="fq"><div class="fr"><span>الالتزام بقاعدة معرفة المنشأة</span><b>98%</b></div><div class="tr"><div class="fl" style="width:98%"></div></div></div>
-            <div class="fq"><div class="fr"><span>رضا المتصلين عن اللهجة المصرية</span><b>95%</b></div><div class="tr"><div class="fl" style="width:95%"></div></div></div>
+            <div class="fq"><div class="fr"><span>سرعة تحويل الصوت إلى نص (Deepgram Nova-3)</span><b>غير مقاسة</b></div></div>
+            <div class="fq"><div class="fr"><span>الالتزام بقاعدة معرفة المنشأة</span><b>لم يُقيّم</b></div></div>
+            <div class="fq"><div class="fr"><span>رضا المتصلين عن اللهجة المصرية</span><b>لم يُقَس</b></div></div>
           </div>
         </div>
       </div>
@@ -278,23 +274,21 @@
           <div class="card">
             <h3>توزيع المكالمات حسب النتيجة</h3>
             <p class="sub" style="margin-bottom:18px">ملخص نتائج الاتصالات المسجلة</p>
-            <div class="fq"><div class="fr"><span>مكالمات مكتملة وتم الرد عليها آلياً</span><b>88%</b></div><div class="tr"><div class="fl" style="width:88%"></div></div></div>
-            <div class="fq"><div class="fr"><span>مكالمات انتهت بحجز أو طلب مؤكد</span><b>64%</b></div><div class="tr"><div class="fl" style="width:64%"></div></div></div>
-            <div class="fq"><div class="fr"><span>مكالمات تم تحويلها للمختص البشري</span><b>12%</b></div><div class="tr"><div class="fl" style="width:12%"></div></div></div>
+            <div class="fq"><div class="fr"><span>مكالمات مكتملة</span><b id="rep-completed">—</b></div><div class="tr"><div class="fl" id="rep-completed-bar" style="width:0%"></div></div></div>
+            <div class="fq"><div class="fr"><span>حجوزات مؤكدة من المزود</span><b id="rep-booked">—</b></div><div class="tr"><div class="fl" id="rep-booked-bar" style="width:0%"></div></div></div>
+            <div class="fq"><div class="fr"><span>مكالمات فائتة</span><b id="rep-abandoned">—</b></div><div class="tr"><div class="fl" id="rep-abandoned-bar" style="width:0%"></div></div></div>
           </div>
           <div class="card">
             <h3>توزيع الاتصالات على مدار اليوم</h3>
             <p class="sub" style="margin-bottom:18px">نسبة الاتصالات المستلمة في أوقات الذروة وخارج أوقات العمل</p>
-            <div class="fq"><div class="fr"><span>ساعات العمل الصباحية (9 ص - 2 ظ)</span><b>41%</b></div><div class="tr"><div class="fl" style="width:41%"></div></div></div>
-            <div class="fq"><div class="fr"><span>ساعات العمل المسائية (2 ظ - 9 م)</span><b>44%</b></div><div class="tr"><div class="fl" style="width:44%"></div></div></div>
-            <div class="fq"><div class="fr"><span>خارج ساعات العمل الرسمية (تغطية آلية 24/7)</span><b>15%</b></div><div class="tr"><div class="fl" style="width:15%"></div></div></div>
+            <p class="sub">لم يتم إعداد تقسيم ساعات العمل لكل منشأة بعد. يمكن الاطلاع على توقيت كل مكالمة في السجل.</p>
           </div>
         </div>
       </div>
 
       <!-- 7. BILLING -->
       <div id="page-billing" class="page">
-        <div class="hd"><div><h1>الفواتير وخطة الاشتراك</h1><p>إدارة باقة منشأتك ومتابعة حالة الاشتراك والترقية</p></div><span class="bd ok">الاشتراك نشط</span></div>
+        <div class="hd"><div><h1>الفواتير وخطة الاشتراك</h1><p>إدارة باقة منشأتك ومتابعة حالة الاشتراك والترقية (خطط تعريفية وليست فواتير مفعّلة)</p></div><span class="bd wip">الاشتراكات والفوترة قيد التطوير</span></div>
         <div class="g3">
           <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center"><b>الباقة التجريبية (Pilot 14-Day)</b><span class="bd bl">14 يوماً</span></div>
@@ -304,7 +298,7 @@
             <div class="mt" style="border:0"><span>لوحة تحكم وتقارير كاملة</span><b>✓</b></div>
           </div>
           <div class="card" style="border-color:#1BA6B8;box-shadow:0 0 0 2px #1BA6B8, 0 12px 28px rgba(27,166,184,0.12)">
-            <div style="display:flex;justify-content:space-between;align-items:center"><b>باقة النمو والأعمال (Growth)</b><span class="bd ok">الأكثر طلباً للمنشآت</span></div>
+            <div style="display:flex;justify-content:space-between;align-items:center"><b>باقة النمو والأعمال (Growth)</b><span class="bd wip">خطة مقترحة</span></div>
             <div class="kv" style="margin:14px 0 6px;color:#1BA6B8">1,499 <span style="font-size:14px;color:#627D98">ج.م / شهر</span></div>
             <p class="sub" style="margin-bottom:16px">مناسبة للشركات والمكاتب الاستشارية والمراكز الخدمية</p>
             <div class="mt"><span>1,000 دقيقة مكالمات شهرياً</span><b>✓</b></div>
@@ -322,7 +316,7 @@
 
       <!-- 8. VOICE SETTINGS -->
       <div id="page-settings" class="page">
-        <div class="hd"><div><h1>إعدادات الصوت</h1><p>خصّص صوت المساعد وشخصيته وتعليمات منشأتك الإضافية</p></div><span class="bd ok">المساعد نشط (Voice ID: MX8opBj7bbi4G2cE9j2w)</span></div>
+        <div class="hd"><div><h1>إعدادات الصوت</h1><p>خصّص صوت المساعد وشخصيته وتعليمات منشأتك الإضافية</p></div><span class="bd wip">حالة الخدمة الصوتية تُفحص عند بدء الاتصال</span></div>
         <div class="g2" style="grid-template-columns:1.5fr 1fr">
           <div style="display:flex;flex-direction:column;gap:20px">
             <div class="card">
@@ -529,6 +523,26 @@ function renderClientKPIs(calls) {
   document.getElementById('c-kpi-missed').textContent = missed.toLocaleString('en-US');
   document.getElementById('cl-total').textContent = total.toLocaleString('en-US');
   document.getElementById('cl-booked').textContent = bookings.toLocaleString('en-US');
+  document.getElementById('cl-pending').textContent = calls.filter(c => c.selected_slot && c.booking_confirmed !== 1).length.toLocaleString('en-US');
+  const durations = calls.filter(c => Number(c.ended_at) > Number(c.started_at)).map(c => Number(c.ended_at) - Number(c.started_at));
+  const meanSeconds = durations.length ? Math.round(durations.reduce((a,b) => a+b,0)/durations.length) : null;
+  document.getElementById('c-kpi-duration').textContent = meanSeconds === null ? '—' : `${String(Math.floor(meanSeconds/60)).padStart(2,'0')}:${String(meanSeconds%60).padStart(2,'0')}`;
+  document.getElementById('c-kpi-completed-rate').textContent = total ? Math.round(completed/total*100)+'%' : '—';
+  renderCallOutcomeReports(calls);
+}
+
+function renderCallOutcomeReports(calls) {
+  const total = calls.length;
+  const measures = {
+    completed: calls.filter(c => c.call_status === 'completed').length,
+    booked: calls.filter(c => c.booking_confirmed === 1).length,
+    abandoned: calls.filter(c => c.call_status === 'abandoned').length
+  };
+  for (const [key, count] of Object.entries(measures)) {
+    const percent = total ? Math.round((count / total) * 100) : 0;
+    document.getElementById('rep-' + key).textContent = total ? percent + '% (' + count + ')' : '—';
+    document.getElementById('rep-' + key + '-bar').style.width = percent + '%';
+  }
 }
 
 function renderClientCalls(calls) {
@@ -620,12 +634,11 @@ function renderClientsTable(calls) {
 
 function renderClientStatus(status) {
   if (!status) return;
-  if (status.status) document.getElementById('st-pill').textContent = 'نشط ويعمل بشكل طبيعي';
+  if (status.status) document.getElementById('st-pill').textContent = status.status;
   if (status.knowledge_count !== undefined) document.getElementById('st-kcount').textContent = status.knowledge_count;
-  if (status.avg_latency) {
-    document.getElementById('st-lat').textContent = status.avg_latency + ' ms';
-    document.getElementById('perf-lat').textContent = status.avg_latency + ' ms';
-  }
+  const latency = typeof status.avg_latency === 'number' && status.avg_latency >= 0 ? Math.round(status.avg_latency) + ' ms' : 'غير متاح';
+  document.getElementById('st-lat').textContent = latency;
+  document.getElementById('perf-lat').textContent = latency;
 }
 
 async function loadKnowledge() {
@@ -765,15 +778,25 @@ function copyText(id) {
   showToast('تم نسخ النص إلى الحافظة');
 }
 
+function csvSafeCell(value) {
+  let text = String(value ?? '');
+  // Avoid spreadsheet formula execution when opening a CSV in Excel or similar tools.
+  if (/^[\s\uFEFF]*[=+@-]/u.test(text)) text = "'" + text;
+  return '"' + text.replace(/"/g, '""') + '"';
+}
+
 function exportSessionsCSV() {
+  if (!allSessions.length) { showToast('لا توجد مكالمات لتصديرها بعد'); return; }
   const rows = [['Session ID', 'Topic/Department', 'Status', 'Slot', 'Booking Confirmed']];
-  allSessions.forEach(c => rows.push([c.id, c.selected_doctor || '', c.call_status || '', c.selected_slot || '', c.booking_confirmed || 0]));
-  const csv = rows.map(r => r.join(',')).join('\n');
+  allSessions.forEach(c => rows.push([c.id, c.selected_doctor || '', c.call_status || '', c.selected_slot || '', c.booking_confirmed === 1 ? 'yes' : 'no']));
+  const csv = '\uFEFF' + rows.map(r => r.map(csvSafeCell).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(blob);
+  a.href = url;
   a.download = 'mizan-sessions-report.csv';
   a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
   showToast('تم تصدير التقرير بصيغة CSV');
 }
 
