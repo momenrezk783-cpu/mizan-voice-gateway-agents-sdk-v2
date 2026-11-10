@@ -35,3 +35,10 @@ This is a verification ledger, not an optimistic project plan. For historical de
 - `npm run staging:check`: BLOCKED (exit 2), because live Staging bindings/config are not provisioned.
 - `npm run build`: BLOCKED (exit 2), because npm dependency install is unavailable. **Do not call this Sprint production ready.**
 - No SIP server, live telephony, Cloudflare staging deployment, migrations or production changes occurred.
+
+## Sprint 8 continuation — 2026-11-10 (local)
+
+- Starting commit `e417a1e`. Extracted login throttle functions into `src/lib/login-throttle.ts`; added bounded, PII-free p50/p95 aggregation over the latest 500 turn latencies to assistant-status; replaced fabricated client dashboard counts, monthly comparisons, satisfaction rating, and weekly graph with non-fabricated placeholders / data derived from the latest 100 sessions.
+- Corrected semantics: completed call != resolved call; 'weekly' covers only latest 100 records, not all-time dataset.
+- Tests: `npm test` PASS exit 0; see `docs/evidence/sprint8-local.log`, includes 18/18 conversation, static UI acceptance and latency percentile checks.
+- Remaining sprint-8 scopes: complete TypeScript compile / Wrangler dry run, staging telemetry and live load baseline (blocked by remote dependency/config availability). No production resources were touched.

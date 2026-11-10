@@ -45,3 +45,10 @@ Evidence recorded 2026-11-10 18:33 UTC. Never conflate local/remote GitHub check
 - `npm run staging:check`: intentionally exits 2 because isolated `wrangler.staging.toml` does not yet exist. Source config is a template only.
 - `npm run build`: intentionally exits 2 because Wrangler dependencies are absent (npm registry returned EAI_AGAIN in this environment). No full Worker bundling was performed.
 - Tests simulate media frames; **not evidence of real SIP signalling, RTP, live latency or carrier interoperability**.
+
+## E-005 — Sprint 8 local correctness and truthful UI
+
+- `npm test`: exit 0; evidence file `docs/evidence/sprint8-local.log`.
+- Added sampled latency p50/p95 helper tests and UI tests for fixed fake numbers; moved login throttle into dedicated module while preserving its call sites.
+- The new latency fields are **sample-based estimates**, not network uptime or voice quality certification.
+- Full Worker build, cloud load and browser/device E2E remain NOT VERIFIED.

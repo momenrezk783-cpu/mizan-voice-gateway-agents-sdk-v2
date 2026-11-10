@@ -9,7 +9,7 @@
     "db:migrate": "wrangler d1 execute mizan-portal-db --remote --file=./schema.sql",
     "db:migrate:001": "wrangler d1 execute mizan-portal-db --remote --file=./migration-001.sql",
     "db:migrate:002": "wrangler d1 execute mizan-portal-db --remote --file=./migration-002.sql",
-    "test": "node tests/staging-guard.test.mjs && node tests/telephony-lab.test.mjs && node tests/deepgram-migration.test.mjs && node tests/conversation-manager.test.mjs && node tests/security-product.test.mjs && node tests/acceptance.test.mjs && npm run assets:check",
+    "test": "node tests/staging-guard.test.mjs && node tests/telephony-lab.test.mjs && node tests/operational-metrics.test.mjs && node tests/deepgram-migration.test.mjs && node tests/conversation-manager.test.mjs && node tests/security-product.test.mjs && node tests/acceptance.test.mjs && npm run assets:check",
     "types": "wrangler types",
     "assets:sync": "node scripts/sync-ui-assets.mjs",
     "assets:check": "node scripts/sync-ui-assets.mjs --check",

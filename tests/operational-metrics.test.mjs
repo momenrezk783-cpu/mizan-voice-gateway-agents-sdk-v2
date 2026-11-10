@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url),ts=require('typescript');
+const t=ts.transpileModule(readFileSync('src/lib/operational-metrics.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+const {summarizeLatency}=await import('data:text/javascript;base64,'+Buffer.from(t).toString('base64'));
+assert.deepEqual(summarizeLatency([]),{p50:null,p95:null,samples:0});
+assert.deepEqual(summarizeLatency([10,20,30,40,50,Infinity,-1]),{p50:30,p95:50,samples:5});
+assert.deepEqual(summarizeLatency([0]),{p50:0,p95:0,samples:1});
+const page=readFileSync('public/client.html','utf8');
+assert.ok(!page.includes('12,480')&&!page.includes('94.6%')&&!page.includes('4.8 / 5'));
+assert.ok(!page.includes('1,420')&&!page.includes('1.2 ثانية'));
+assert.ok(page.includes('renderWeeklyCalls(calls)'));
+assert.ok(page.includes("document.getElementById('ov-latency').textContent = latency"));
+assert.ok(readFileSync('src/index.ts','utf8').includes('recent_latency_sample_count'));
+console.log('PASS realistic UI reporting and sampled, PII-free latency percentiles');
