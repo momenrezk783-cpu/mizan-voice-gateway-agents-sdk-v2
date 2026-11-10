@@ -38,3 +38,10 @@ Evidence recorded 2026-11-10 18:33 UTC. Never conflate local/remote GitHub check
 | Live end-to-end voice | Provider-approved call traces and latency metrics | NOT VERIFIED |
 | SIP/PBX integration | Authorized lab PBX, RTP bridge tests, BYON routing | NOT IMPLEMENTED |
 | Production release | Explicit separate approval and rollback procedure | NOT AUTHORIZED |
+
+## E-004 — Sprint 7 continuation / lab-only results
+
+- `npm test`: exit 0, full stdout/stderr in `docs/evidence/sprint7-local.log`. Adds PCMU/PCM audio bridge tests, bounded payload / replay / tenant routing lifecycle tests, and fail-closed Staging config checks.
+- `npm run staging:check`: intentionally exits 2 because isolated `wrangler.staging.toml` does not yet exist. Source config is a template only.
+- `npm run build`: intentionally exits 2 because Wrangler dependencies are absent (npm registry returned EAI_AGAIN in this environment). No full Worker bundling was performed.
+- Tests simulate media frames; **not evidence of real SIP signalling, RTP, live latency or carrier interoperability**.

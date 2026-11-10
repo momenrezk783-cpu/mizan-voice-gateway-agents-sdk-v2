@@ -27,3 +27,11 @@ This is a verification ledger, not an optimistic project plan. For historical de
 ## Future sprint entry template
 
 `Date | Sprint | Starting commit | Ending commit | Changed files | Tests (commands, exit codes, logs) | Before/after | Outstanding blockers | Release decision`.
+
+## Sprint 7 continuation — 2026-11-10 (local)
+
+- Starting commit: `155eeaf`. Deliverables: `src/lib/telephony/adapter.ts` (lab-only vendor-neutral PCMU/PCM interface), Staging template, fail-closed Staging config guard, genuine build preflight that refuses to claim a build without Wrangler/dependencies.
+- `npm test`: PASS (exit 0), full output `docs/evidence/sprint7-local.log`; lab audio/packet tests and staging guard both PASS.
+- `npm run staging:check`: BLOCKED (exit 2), because live Staging bindings/config are not provisioned.
+- `npm run build`: BLOCKED (exit 2), because npm dependency install is unavailable. **Do not call this Sprint production ready.**
+- No SIP server, live telephony, Cloudflare staging deployment, migrations or production changes occurred.

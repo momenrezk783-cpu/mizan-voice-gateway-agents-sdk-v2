@@ -9,3 +9,6 @@ node_modules/
 .DS_Store
 *.log
 !docs/evidence/*.log
+
+# Isolated staged bindings contain deployment identifiers
+wrangler.staging.toml

@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url), ts=require('typescript');
+const source=readFileSync('src/lib/telephony/adapter.ts','utf8');
+const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+const lib=await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
+assert.equal(lib.decodePcmuByte(0xff),0);
+assert.equal(lib.decodePcmuByte(0x7f),0);
+assert.equal(lib.encodePcmuSample(0),0xff);
+const samples=new Uint8Array(160).fill(0xff);
+const pcm=lib.pcmuToPcm16k(samples);
+assert.equal(pcm.byteLength,640); // 20 ms PCMU8k -> PCM16 16k
+assert.deepEqual([...lib.pcm16kToPcmu(pcm)], [...samples]);
+assert.throws(()=>lib.pcmuToPcm16k(new Uint8Array(1601)),/large/);
+const session=new lib.TelephonyLabSession('clinic-1');
+const data=Buffer.from(samples).toString('base64');
+assert.throws(()=>session.accept({event:'media',streamId:'call1',sequence:0,payload:data}),/Unknown/);
+session.accept({event:'start',streamId:'call1',codec:'PCMU/8000'});
+assert.deepEqual(session.accept({event:'media',streamId:'call1',sequence:0,payload:data}),pcm);
+assert.throws(()=>session.accept({event:'media',streamId:'call1',sequence:0,payload:data}),/Out-of-order/);
+assert.throws(()=>session.accept({event:'media',streamId:'other',sequence:1,payload:data}),/Unknown/);
+assert.throws(()=>session.accept({event:'media',streamId:'call1',sequence:1,payload:'invalid!'}),/encoding/);
+assert.throws(()=>new lib.TelephonyLabSession('wrong/tenant'),/Invalid/);
+assert.equal(session.createOutboundPcmu(pcm).length,160);
+session.accept({event:'stop',streamId:'call1'});
+assert.throws(()=>session.createOutboundPcmu(pcm),/active/);
+console.log('PASS vendor-neutral PCMU 8k/PCM16 16k telephony lab roundtrip, bounded input, tenant route, packet lifecycle');
