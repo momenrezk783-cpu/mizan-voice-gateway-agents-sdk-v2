@@ -64,3 +64,9 @@ Evidence recorded 2026-11-10 18:33 UTC. Never conflate local/remote GitHub check
 - `npm test`: exit 0, `docs/evidence/sprint10-local.log`. SQLite exercised actual SQL with multiple tenants and adjacent UTC months.
 - No invoices are issued; usage is estimated from completed `call_sessions` durations only and is not tariff- or carrier-verified metering.
 - No payment gateway or webhook is connected (not verified).
+
+## E-008 — Sprint 11 SIP routing and SEO
+
+- `npm test`: exit 0 from detached process, stored in `docs/evidence/sprint11-exit.txt`; log `docs/evidence/sprint11-local.log`.
+- Trusted-PBX route tests reject unknown peers, invalid numbers and duplicate/ambiguous mapping. The test assumes an upstream trusted identity; it does **not** establish authentication or SIP interoperability.
+- SEO test verifies canonical tags and non-public paths omitted from sitemap. No search-engine indexing measurement.

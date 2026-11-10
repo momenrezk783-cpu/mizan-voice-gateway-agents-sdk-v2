@@ -56,3 +56,10 @@ This is a verification ledger, not an optimistic project plan. For historical de
 - Corrected plan display: no unapproved package prices, minute allowance or misleading claim that SIP/PBX is commercially available; client portal shows source-derived counts and estimated recorded duration.
 - `npm test`: PASS exit 0; log `docs/evidence/sprint10-local.log`, includes scoped SQL tests and month validation.
 - Pending: payment processor/vendor selection, sandbox integration, accounting reconciliation, approved pricing/rounding/tax policy and production retention review. No payment requests executed.
+
+## Sprint 11 continuation — 2026-11-10 (local)
+
+- Starting commit `45a92f4`; added trusted-peer/E.164 per-tenant BYON routing for lab SIP/PBX scenarios and a comprehensive lab guide; no SIP INVITE, network bridge, telco or live calls.
+- Added public homepage metadata, robots and sitemap excluding private routes.
+- `npm test`: PASS exit 0, evidence `docs/evidence/sprint11-local.log` with `docs/evidence/sprint11-exit.txt` containing 0 (detached runner used to avoid tool request timeouts).
+- Remaining: real PBX gateway, production authentication, lawful carrier routing, booking provider, semantic search, and customer onboarding; not claimed completed.
