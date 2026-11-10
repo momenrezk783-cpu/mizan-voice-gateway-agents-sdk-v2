@@ -1,7 +1,5 @@
 # FOLLOW_UP
 
-On branch `fix/remove-response-language-and-raw-audio-checks`, removed the custom Whisper `initial_prompt` and the extra LLM response-language instructions, while preserving Whisper's `language: "ar"` and the existing TTS language configuration.
-Removed the added per-sample clamp/invalid-value sanitization from raw Float32 audio conversion; the PCM worklet's existing speech detection and chunking were left unchanged, and no raw-audio logging was present in the inspected files.
-Source changes were reread for verification, but no build, runtime test, PR, merge, or deployment was performed; `main` and Production remain unchanged.
-
-Rollback preparation: PR #18 UI refresh is reverted on branch `revert/pr-18-preline-ui-refresh` by restoring the seven affected source files to the pre-PR base and removing the two added UI assets. No merge or production deployment has been performed; run build and voice regression checks before merging.
+The pre-PR #18 baseline is commit `bc2bc83f4c3bc199ad7d3d52c1cf1a3431fbfd95`; PR #18 (`e7b7b8d`) added the bilingual Preline UI layer and shared language script.
+PR #18's UI changes have been reverted on branch `revert/pr-18-preline-ui-refresh` and submitted as draft PR [#22](https://github.com/momenrezk783-cpu/mizan-voice-gateway-agents-sdk-v2/pull/22); the branch diff restores the affected files and removes `preline-ui.css` and `i18n.js`.
+PR #22 is not merged, and no production deployment was performed; build validation and an end-to-end voice regression test remain required before merge.
