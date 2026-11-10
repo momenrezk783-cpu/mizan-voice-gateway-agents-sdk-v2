@@ -30,6 +30,8 @@ assert.ok(gateway.includes('FROM call_turns WHERE session_id = ? AND tenant_slug
 assert.ok(gateway.includes('origin !== url.origin'), 'Reject cross-site cookie POSTs');
 assert.ok(gateway.includes('loginThrottleCheck(env, rateKeys, now)'), 'Throttle login attempts');
 assert.ok(gateway.includes('Retry-After'), 'Tell clients when rate limit expires');
+assert.ok(gateway.includes('Untrusted voice request origin'), 'Reject cross-site browser voice sessions');
+assert.ok(gateway.includes('Invalid voice session identifier'), 'Reject forged/oversized session identifiers');
 assert.ok(readFileSync('src/lib/deepgram-stt.ts','utf8').includes('onStatus?.("unavailable")'), 'Notify callers when STT exhausts retry attempts');
 assert.ok(readFileSync('public/js/search-ui.js','utf8').includes('title.textContent ='), 'Search renders user content as text');
 assert.ok(readFileSync('src/lib/search.ts','utf8').includes('ct.tenant_slug = cs.tenant_slug'), 'Call search is tenant scoped');

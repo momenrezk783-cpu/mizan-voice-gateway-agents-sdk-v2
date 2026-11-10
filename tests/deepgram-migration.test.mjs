@@ -31,6 +31,7 @@ console.log("=== Running Mizan Voice Gateway Deepgram STT Migration Test Suite =
 {
   const sourceFiles = [
     "src/lib/deepgram-stt.ts",
+    "src/lib/search.ts",
     "src/lib/tenant.ts",
     "src/lib/auth.ts",
     "src/lib/crypto.ts",
@@ -46,7 +47,7 @@ console.log("=== Running Mizan Voice Gateway Deepgram STT Migration Test Suite =
     const compiled = transpileTs(file);
     assert.ok(compiled && compiled.length > 0, `Failed to compile ${file}`);
   }
-  console.log(`[PASS] 0. All ${sourceFiles.length} TypeScript modules compiled cleanly with zero syntax/type-syntax errors`);
+  console.log(`[PASS] 0. All ${sourceFiles.length} TypeScript modules transpiled successfully (full type-check requires dependency installation)`);
 }
 
 const deepgramMod = await loadTsModule("src/lib/deepgram-stt.ts");
@@ -415,6 +416,63 @@ class MockDeepgramSocket {
     "Missing DEEPGRAM_API_KEY must fail fast with explicit error"
   );
   console.log("[PASS] 5. Missing DEEPGRAM_API_KEY secret fail-safe guard verified");
+}
+
+// ---------------------------------------------------------------------------
+// 6. Audio transport failure recovery and buffered frame retention
+// ---------------------------------------------------------------------------
+{
+  let socketNumber = 0;
+  const sockets = [];
+  const statuses = [];
+  const speechFrame = new Int16Array(1024).fill(5500).buffer;
+  const session = new DeepgramStreamingSession('test-dg-key', {
+    onFinalTranscript: () => {}, onStatus: (status) => statuses.push(status)
+  }, {webSocketFactory: async () => {
+    const socket = new MockDeepgramSocket();
+    if (socketNumber++ === 0) {
+      const originalSend = socket.send.bind(socket);
+      socket.send = (data) => {
+        if (typeof data !== 'string') throw new Error('simulated binary transport failure');
+        originalSend(data);
+      };
+    }
+    sockets.push(socket);
+    return socket;
+  }});
+  await session.connect();
+  // Deliberate failure injection; suppress expected noisy stack traces from a data-URL test module.
+  const previousErrorLog = console.error;
+  let sentSuccessfully;
+  try {
+    console.error = () => {};
+    sentSuccessfully = session.sendAudio(speechFrame);
+  } finally {
+    console.error = previousErrorLog;
+  }
+  assert.equal(sentSuccessfully, false, 'Failed frames must not count as delivered');
+  assert.equal(session.pendingAudioQueue.length,1,'Unsent voice audio must be buffered');
+  assert.ok(statuses.includes('reconnecting'),'Browser receives reconnecting status');
+  assert.equal(sockets[0].closed,true,'Broken WebSocket closes');
+  await session.connect();
+  assert.equal(sockets[1].sentBinaryFrames.length,1,'Buffered speech is replayed on reconnect');
+  assert.equal(session.pendingAudioQueue.length,0);
+  session.close();
+  assert.equal(session.sendAudio(speechFrame), false, 'Post-close frames must still be blocked');
+
+  const initialBuffered = new DeepgramStreamingSession('test-dg-key', {
+    onFinalTranscript: () => {}, onStatus: (status) => statuses.push(status)
+  }, {webSocketFactory: async () => {
+    const socket = new MockDeepgramSocket();
+    socket.send = data => {if(typeof data !== 'string') throw new Error('failed queued write');};
+    return socket;
+  }});
+  assert.equal(initialBuffered.sendAudio(speechFrame),false,'Audio buffered while connecting');
+  assert.equal(initialBuffered.pendingAudioQueue.length,1);
+  await initialBuffered.connect();
+  assert.equal(initialBuffered.pendingAudioQueue.length,1,'Queued voice chunks must survive failed flush');
+  initialBuffered.close();
+  console.log('[PASS] 6. STT binary send failure triggers reconnect, buffers/replays audio, and retains unsent frames');
 }
 
 console.log("=== ALL TESTS PASSED SUCCESSFULLY ===");

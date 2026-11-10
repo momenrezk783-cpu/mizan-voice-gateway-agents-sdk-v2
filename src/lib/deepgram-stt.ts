@@ -533,6 +533,16 @@ export class DeepgramStreamingSession {
         return true;
       } catch (err) {
         console.error("Deepgram audio send failed:", err);
+        // Preserve this speech frame and reconnect instead of silently losing it.
+        if (rms > 0.008 && this.pendingAudioBytes + pcmBytes.byteLength <= DeepgramStreamingSession.MAX_PENDING_AUDIO_BYTES) {
+          this.pendingAudioQueue.push(pcmBytes.slice());
+          this.pendingAudioBytes += pcmBytes.byteLength;
+        }
+        const failedSocket = this.ws;
+        this.ws = null;
+        this.stopKeepAlive();
+        try { failedSocket?.close(1011, "Audio transport failure"); } catch { /* Already disconnected. */ }
+        this.scheduleReconnect();
         return false;
       }
     }
@@ -565,10 +575,18 @@ export class DeepgramStreamingSession {
     const queued = this.pendingAudioQueue;
     this.pendingAudioQueue = [];
     this.pendingAudioBytes = 0;
-    for (const chunk of queued) {
+    for (let i = 0; i < queued.length; i++) {
       try {
-        this.ws.send(chunk.buffer);
+        this.ws.send(queued[i].buffer);
       } catch {
+        // Keep the unsent suffix. Previously all buffered speech was lost here.
+        this.pendingAudioQueue = queued.slice(i);
+        this.pendingAudioBytes = this.pendingAudioQueue.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+        const failedSocket = this.ws;
+        this.ws = null;
+        this.stopKeepAlive();
+        try { failedSocket?.close(1011, "Buffered audio send failure"); } catch { /* Disconnected. */ }
+        this.scheduleReconnect();
         break;
       }
     }

@@ -180,12 +180,29 @@ async function handleVoiceWebSocket(
   }
 
   const slug = match[1];
-  const sessionId = url.searchParams.get("session_id") ?? crypto.randomUUID();
+  const requestedSessionId = url.searchParams.get("session_id");
+  if (requestedSessionId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(requestedSessionId)) {
+    return new Response("Invalid voice session identifier", { status: 400, headers: securityHeaders });
+  }
+  const sessionId = requestedSessionId ?? crypto.randomUUID();
 
   // Validate tenant exists and is active before routing
   const tenant = await resolveTenant(slug, env);
   if (!tenant) {
     return new Response("Tenant not found or suspended", { status: 404 });
+  }
+
+  // Browser-origin check limits cross-site drive-by sessions. Non-browser clients
+  // can omit Origin, so full abuse protection still requires a signed call token.
+  const callerOrigin = request.headers.get("Origin");
+  if (callerOrigin) {
+    const trustedOrigins = new Set([url.origin, "https://mizanconsult.com", "https://www.mizanconsult.com"]);
+    if (tenant.domain) {
+      try { trustedOrigins.add(new URL(`https://${tenant.domain}`).origin); } catch { /* Invalid tenant domain is never trusted. */ }
+    }
+    if (!trustedOrigins.has(callerOrigin)) {
+      return new Response("Untrusted voice request origin", { status: 403, headers: securityHeaders });
+    }
   }
 
   // Enforce per-tenant concurrent session limit
