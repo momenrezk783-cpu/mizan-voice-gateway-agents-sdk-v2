@@ -294,25 +294,31 @@
       <!-- 7. BILLING -->
       <div id="page-billing" class="page">
         <div class="hd"><div><h1>الفواتير وخطة الاشتراك</h1><p>إدارة باقة منشأتك ومتابعة حالة الاشتراك والترقية (خطط تعريفية وليست فواتير مفعّلة)</p></div><span class="bd wip">الاشتراكات والفوترة قيد التطوير</span></div>
+        <div class="card" style="margin-bottom:16px">
+          <h3>استهلاك المكالمات المسجل</h3>
+          <label for="billing-month">الشهر (UTC)</label>
+          <input type="month" id="billing-month" onchange="loadBillingUsage()" style="margin:8px;max-width:200px">
+          <p class="sub" id="billing-usage-status">هذه بيانات استهلاك تقديرية وليست فاتورة. لا توجد مدفوعات مفعلة.</p>
+        </div>
         <div class="g3">
           <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center"><b>الباقة التجريبية (Pilot 14-Day)</b><span class="bd bl">14 يوماً</span></div>
             <div class="kv" style="margin:14px 0 6px">باقة التحقق</div>
             <p class="sub" style="margin-bottom:16px">رابط مكالمة ويب مباشر وقاعدة معرفة مخصصة لمنشأتك</p>
             <div class="mt"><span>رابط اتصال مباشر (/c/slug)</span><b>✓</b></div>
-            <div class="mt" style="border:0"><span>لوحة تحكم وتقارير كاملة</span><b>✓</b></div>
+            <div class="mt" style="border:0"><span>لوحة تحكم وتقارير أولية</span><b>✓</b></div>
           </div>
           <div class="card" style="border-color:#1BA6B8;box-shadow:0 0 0 2px #1BA6B8, 0 12px 28px rgba(27,166,184,0.12)">
             <div style="display:flex;justify-content:space-between;align-items:center"><b>باقة النمو والأعمال (Growth)</b><span class="bd wip">خطة مقترحة</span></div>
-            <div class="kv" style="margin:14px 0 6px;color:#1BA6B8">1,499 <span style="font-size:14px;color:#627D98">ج.م / شهر</span></div>
+            <div class="kv" style="margin:14px 0 6px;color:#1BA6B8">السعر غير معتمد</div>
             <p class="sub" style="margin-bottom:16px">مناسبة للشركات والمكاتب الاستشارية والمراكز الخدمية</p>
-            <div class="mt"><span>1,000 دقيقة مكالمات شهرياً</span><b>✓</b></div>
+            <div class="mt"><span>حد الدقائق سيُحدد عند اعتماد الباقة</span><b>✓</b></div>
             <div class="mt" style="border:0"><span>تحديث فوري لقاعدة المعرفة</span><b>✓</b></div>
           </div>
           <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center"><b>الباقة المؤسسية والربط الكامل (PBX)</b><span class="bd bl">مؤسسي</span></div>
-            <div class="kv" style="margin:14px 0 6px">4,999 <span style="font-size:14px;color:#627D98">ج.م / شهر</span></div>
-            <p class="sub" style="margin-bottom:16px">ربط كامل مع سنترال المنشأة (SIP/PBX) ونطاق مخصص</p>
+            <div class="kv" style="margin:14px 0 6px">السعر غير معتمد</div>
+            <p class="sub" style="margin-bottom:16px">ربط السنترال SIP/PBX قيد الاختبار التجريبي، غير متاح تجارياً بعد</p>
             <div class="mt"><span>جلسات متزامنة متعددة</span><b>✓</b></div>
             <div class="mt" style="border:0"><span>مفاتيح API وربط CRM مباشر</span><b>✓</b></div>
           </div>
@@ -487,6 +493,7 @@ function showPage(name, navEl) {
 
   if (name === 'overview' || name === 'calls' || name === 'clients') loadOverview();
   if (name === 'clients') loadFollowups();
+  if (name === 'billing') loadBillingUsage();
   if (name === 'knowledge') loadKnowledge();
   if (name === 'settings') loadSettings();
   if (name === 'links') loadLinks();
@@ -665,6 +672,24 @@ function renderClientsTable(calls) {
       <td><button class="lk" onclick="showPage('calls');loadSessionDetail('${safeId(c.id)}')">عرض التفاصيل</button></td>
     </tr>
   `).join('');
+}
+
+async function loadBillingUsage() {
+  const input = document.getElementById('billing-month');
+  const feedback = document.getElementById('billing-usage-status');
+  if (!input || !feedback) return;
+  if (!input.value) input.value = new Date().toISOString().slice(0, 7);
+  feedback.textContent = 'جاري تحميل الاستهلاك...';
+  try {
+    const response = await fetch('/api/client/billing/usage?month=' + encodeURIComponent(input.value), {credentials:'same-origin'});
+    if (!response.ok) throw new Error('Billing usage unavailable');
+    const data = await response.json();
+    const usage = data.usage || {};
+    const minutes = Math.round(Number(usage.recordedDurationSeconds || 0) / 60 * 10) / 10;
+    feedback.textContent = `الشهر: ${usage.month || input.value} | المكالمات: ${Number(usage.callCount || 0)} | مدة المكالمات المسجلة: ${minutes} دقيقة. لا توجد فاتورة أو مبلغ مستحق محسوب.`;
+  } catch {
+    feedback.textContent = 'تعذر تحميل الاستهلاك. لا توجد معلومات دفع مؤكدة.';
+  }
 }
 
 async function loadFollowups() {

@@ -49,3 +49,10 @@ This is a verification ledger, not an optimistic project plan. For historical de
 - `npm test`: PASS exit 0, `docs/evidence/sprint9-local.log`; includes SQLite cross-tenant mutation isolation and status validation.
 - Scope explicitly **basic CRM follow-up**, not contact merging, assignment, end-to-end production CRM or privacy certification; no new raw phone/email storage introduced.
 - No migrations or remote changes; existing `client_queries` requires migration-002 applied in target environment.
+
+## Sprint 10 continuation — 2026-11-10 (local)
+
+- Starting commit `525c798`; implemented read-only per-tenant monthly UTC call usage from timestamped `call_sessions`, with explicit 'not enabled' invoice status and NULL amount. No charge or external provider integration.
+- Corrected plan display: no unapproved package prices, minute allowance or misleading claim that SIP/PBX is commercially available; client portal shows source-derived counts and estimated recorded duration.
+- `npm test`: PASS exit 0; log `docs/evidence/sprint10-local.log`, includes scoped SQL tests and month validation.
+- Pending: payment processor/vendor selection, sandbox integration, accounting reconciliation, approved pricing/rounding/tax policy and production retention review. No payment requests executed.

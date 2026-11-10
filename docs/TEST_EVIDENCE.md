@@ -58,3 +58,9 @@ Evidence recorded 2026-11-10 18:33 UTC. Never conflate local/remote GitHub check
 - `npm test` exit 0, `docs/evidence/sprint9-local.log`.
 - SQLite test proves tenant A cannot mutate tenant B's request through the production UPDATE statement and validates allowed status values.
 - Real authenticated Cloudflare/D1 API/browser integration still unverified (dependency/staging blocker).
+
+## E-007 — Sprint 10 read-only usage report
+
+- `npm test`: exit 0, `docs/evidence/sprint10-local.log`. SQLite exercised actual SQL with multiple tenants and adjacent UTC months.
+- No invoices are issued; usage is estimated from completed `call_sessions` durations only and is not tariff- or carrier-verified metering.
+- No payment gateway or webhook is connected (not verified).

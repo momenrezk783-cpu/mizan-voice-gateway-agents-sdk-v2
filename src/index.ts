@@ -20,6 +20,7 @@ import { parseSearchInput, searchClientData, searchAdminData } from "./lib/searc
 import { loginRateKey, loginThrottleCheck, recordFailedLogin } from "./lib/login-throttle";
 import { summarizeLatency } from "./lib/operational-metrics";
 import { isRequestStatus, listTenantRequests, updateTenantRequestStatus } from "./lib/crm";
+import { getTenantMonthlyUsage, getUtcMonthBounds } from "./lib/billing";
 
 // Re-export the Agent class so Wrangler can find it
 export { MizanVoiceAgent };
@@ -352,6 +353,17 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
     const params = parseSearchInput(url, ["all", "knowledge", "calls"]);
     if ("error" in params) return json({ error: params.error }, params.status);
     return json({ results: await searchClientData(env.DB, slug, params.q, params.scope), mode: "text" });
+  }
+
+  // Read-only usage reporting. No invoicing, charging, or payment side effects.
+  if (path === "/api/client/billing/usage" && request.method === "GET") {
+    const month = url.searchParams.get("month") || new Date().toISOString().slice(0,7);
+    if (!getUtcMonthBounds(month)) return json({ error: "Invalid billing month" }, 400);
+    const [usage, tenant] = await Promise.all([
+      getTenantMonthlyUsage(env.DB, slug, month),
+      env.DB.prepare(`SELECT plan_tier FROM tenants WHERE slug = ?`).bind(slug).first<{ plan_tier: string }>()
+    ]);
+    return json({usage, planTier: tenant?.plan_tier ?? null, note: "استهلاك تقريبي — ليست فاتورة أو مطالبة دفع"});
   }
 
   // CRM follow-up: only records created by this signed-in tenant's voice workflow.
