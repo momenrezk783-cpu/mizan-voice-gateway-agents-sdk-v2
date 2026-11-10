@@ -1,0 +1,40 @@
+# Evidence register — Mizan Voice Gateway v2
+
+Evidence recorded 2026-11-10 18:33 UTC. Never conflate local/remote GitHub checkouts or mocked/live tests.
+
+## E-001 — Archived starting source
+
+- Artifact filename: `mizan-voice-gateway-v2-six-sprints.zip` (uploaded in this ChatGPT project).
+- SHA-256: `d026f62a56be584271ca36a2ff2ff93502f4cc0c5c3f575714f0dfd504741f1a`.
+- Source files: 39. All extracted file contents matched source in new independent Sprint 7–12 worktree.
+- Git commit of source snapshot before adding this documentation: `8074bf671ef80ccb786fb499c192a566f10069fd`.
+- Frozen per-file checksums: `docs/SNAPSHOT_SPRINT6.sha256`.
+
+## E-002 — Local regression of exact E-001 source
+
+- Command: `npm test`.
+- Exit code: `0` (PASS).
+- Preserved output: `docs/evidence/baseline-local-2026-11-10.log`.
+- Included suites: Deepgram transport and reconnection mocks; conversation manager (18 passed / 0 failed); security/product checks; UI acceptance; SQL integration and `assets:check`.
+- TypeScript test harness uses transpilation, **not** full static type-check or Workers runtime validation.
+
+## E-003 — Remote developer environment / source mismatch
+
+- Remote Desktop Commander device: `localhost` (online at check).
+- Remote tools: Node.js v24.22.1; npm 11.12.1; Git 2.54.0; Python 3.14.10.
+- Public repository URL (user-supplied): `https://github.com/momenrezk783-cpu/mizan-voice-gateway-agents-sdk-v2.git`.
+- `git ls-remote ... HEAD` and an independent isolated remote clone reported commit `671ebcc0c78b34b35470931c06244905e287c71c`.
+- Remote checkout includes both root and nested `mizan-voice-gateway-v2/` projects and its root test script runs only two test files. Therefore **remote npm test on that checkout cannot prove E-001 code passes**.
+- Nothing from E-001 has been deployed, pushed or written into a production repo by this check.
+
+## Outstanding gates
+
+| Gate | Evidence needed | Status |
+|---|---|---|
+| Complete dependency install and lock | `npm ci`, lockfile, tool versions | NOT VERIFIED |
+| Full TypeScript check | `tsc --noEmit` with proper tsconfig/dependencies | NOT VERIFIED |
+| Wrangler bundle validation | `wrangler deploy --dry-run` pointing at isolated configuration | NOT VERIFIED |
+| Staging and D1 migrations | Isolated resource IDs, migration inventory, smoke tests | NOT VERIFIED |
+| Live end-to-end voice | Provider-approved call traces and latency metrics | NOT VERIFIED |
+| SIP/PBX integration | Authorized lab PBX, RTP bridge tests, BYON routing | NOT IMPLEMENTED |
+| Production release | Explicit separate approval and rollback procedure | NOT AUTHORIZED |
