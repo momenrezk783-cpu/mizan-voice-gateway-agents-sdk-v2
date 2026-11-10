@@ -794,6 +794,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
     <div class="ft">بدعم من <a href="https://mizanconsult.com">ميزان هيد كوارتر</a></div>
   </div>
   <script src="/js/onboarding.js"></script>
+  <script src="/js/i18n.js" defer></script>
   <script>
     const TENANT_SLUG="${tenant.slug}",SESSION_ID="${sessionId}",WS_BASE="${wsBase}";
     let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,timerInt=null,startT=null,callAttempt=0,playbackTime=0;
