@@ -42,3 +42,10 @@ This is a verification ledger, not an optimistic project plan. For historical de
 - Corrected semantics: completed call != resolved call; 'weekly' covers only latest 100 records, not all-time dataset.
 - Tests: `npm test` PASS exit 0; see `docs/evidence/sprint8-local.log`, includes 18/18 conversation, static UI acceptance and latency percentile checks.
 - Remaining sprint-8 scopes: complete TypeScript compile / Wrangler dry run, staging telemetry and live load baseline (blocked by remote dependency/config availability). No production resources were touched.
+
+## Sprint 9 continuation — 2026-11-10 (local)
+
+- Starting commit `0317b9c`; integrated tenant-scoped `client_queries` read/status-update APIs and safe browser follow-up table, supporting open/in_progress/closed/cancelled.
+- `npm test`: PASS exit 0, `docs/evidence/sprint9-local.log`; includes SQLite cross-tenant mutation isolation and status validation.
+- Scope explicitly **basic CRM follow-up**, not contact merging, assignment, end-to-end production CRM or privacy certification; no new raw phone/email storage introduced.
+- No migrations or remote changes; existing `client_queries` requires migration-002 applied in target environment.

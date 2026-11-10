@@ -154,6 +154,11 @@
             <tbody id="clients-list-body"></tbody>
           </table>
         </div>
+        <div class="card" id="followups-panel">
+          <div class="ch"><div><h3>طلبات المتابعة من المكالمات</h3><p>طلبات الاتصال والشكاوى المسجلة من المساعد</p></div><button type="button" class="btn o" onclick="loadFollowups()">تحديث</button></div>
+          <p class="sub" id="followup-feedback">جاري تحميل الطلبات...</p>
+          <table><thead><tr><th>الموضوع</th><th>التفاصيل</th><th>التاريخ</th><th>حالة المتابعة</th></tr></thead><tbody id="followups-list"></tbody></table>
+        </div>
       </div>
 
       <!-- 3. CALLS -->
@@ -481,6 +486,7 @@ function showPage(name, navEl) {
   if (activeNav) activeNav.classList.add('on');
 
   if (name === 'overview' || name === 'calls' || name === 'clients') loadOverview();
+  if (name === 'clients') loadFollowups();
   if (name === 'knowledge') loadKnowledge();
   if (name === 'settings') loadSettings();
   if (name === 'links') loadLinks();
@@ -659,6 +665,51 @@ function renderClientsTable(calls) {
       <td><button class="lk" onclick="showPage('calls');loadSessionDetail('${safeId(c.id)}')">عرض التفاصيل</button></td>
     </tr>
   `).join('');
+}
+
+async function loadFollowups() {
+  const tbody = document.getElementById('followups-list');
+  const feedback = document.getElementById('followup-feedback');
+  if (!tbody || !feedback) return;
+  feedback.textContent = 'جاري تحميل طلبات المتابعة...';
+  try {
+    const response = await fetch('/api/client/requests', {credentials:'same-origin'});
+    if (!response.ok) throw new Error('Failed to load requests');
+    const data = await response.json();
+    const requests = Array.isArray(data.requests) ? data.requests : [];
+    tbody.replaceChildren();
+    feedback.textContent = requests.length ? `آخر ${requests.length} طلب متابعة` : 'لا توجد طلبات متابعة مسجلة بعد.';
+    const labels = {open:'جديد', in_progress:'قيد المتابعة', closed:'مكتمل', cancelled:'ملغي'};
+    for (const request of requests) {
+      const row = document.createElement('tr');
+      for (const value of [request.subject || 'طلب متابعة', request.message || '—', request.created_at || '—']) {
+        const cell = document.createElement('td'); cell.textContent = String(value); row.append(cell);
+      }
+      const cell = document.createElement('td');
+      const select = document.createElement('select'); select.setAttribute('aria-label','حالة طلب المتابعة');
+      for (const [value, label] of Object.entries(labels)) {
+        const option = document.createElement('option'); option.value = value; option.textContent = label;
+        option.selected = request.status === value; select.append(option);
+      }
+      select.addEventListener('change', () => updateFollowup(request.id, select.value, select));
+      cell.append(select); row.append(cell); tbody.append(row);
+    }
+  } catch {
+    feedback.textContent = 'تعذر تحميل طلبات المتابعة. حاول مجدداً.';
+  }
+}
+
+async function updateFollowup(id, status, select) {
+  select.disabled = true;
+  try {
+    const response = await fetch('/api/client/requests/' + encodeURIComponent(id) + '/status', {
+      method:'PATCH',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})
+    });
+    if (!response.ok) throw new Error('Failed to save status');
+    showToast('تم تحديث حالة المتابعة');
+  } catch {
+    showToast('تعذر حفظ الحالة'); await loadFollowups();
+  } finally { select.disabled = false; }
 }
 
 function renderClientStatus(status) {

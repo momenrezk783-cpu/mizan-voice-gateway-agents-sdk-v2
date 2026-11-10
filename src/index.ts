@@ -19,6 +19,7 @@ import { EMBEDDED_UI_ASSETS } from "./lib/ui-assets";
 import { parseSearchInput, searchClientData, searchAdminData } from "./lib/search";
 import { loginRateKey, loginThrottleCheck, recordFailedLogin } from "./lib/login-throttle";
 import { summarizeLatency } from "./lib/operational-metrics";
+import { isRequestStatus, listTenantRequests, updateTenantRequestStatus } from "./lib/crm";
 
 // Re-export the Agent class so Wrangler can find it
 export { MizanVoiceAgent };
@@ -351,6 +352,21 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
     const params = parseSearchInput(url, ["all", "knowledge", "calls"]);
     if ("error" in params) return json({ error: params.error }, params.status);
     return json({ results: await searchClientData(env.DB, slug, params.q, params.scope), mode: "text" });
+  }
+
+  // CRM follow-up: only records created by this signed-in tenant's voice workflow.
+  if (path === "/api/client/requests" && request.method === "GET") {
+    const filter = url.searchParams.get("status");
+    if (filter && !isRequestStatus(filter)) return json({ error: "Invalid request status" }, 400);
+    return json({ requests: await listTenantRequests(env.DB, slug, filter || undefined) });
+  }
+
+  const requestStatusMatch = path.match(/^\/api\/client\/requests\/([a-zA-Z0-9_-]{1,96})\/status$/);
+  if (requestStatusMatch && request.method === "PATCH") {
+    const body = await request.json<{ status?: unknown }>();
+    if (!body || !isRequestStatus(body.status)) return json({ error: "Invalid request status" }, 400);
+    const found = await updateTenantRequestStatus(env.DB, slug, requestStatusMatch[1], body.status);
+    return found ? json({ ok: true }) : json({ error: "Request not found" }, 404);
   }
 
   // GET /api/client/sessions — list call sessions

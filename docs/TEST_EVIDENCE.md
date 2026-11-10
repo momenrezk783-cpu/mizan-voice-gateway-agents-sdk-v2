@@ -52,3 +52,9 @@ Evidence recorded 2026-11-10 18:33 UTC. Never conflate local/remote GitHub check
 - Added sampled latency p50/p95 helper tests and UI tests for fixed fake numbers; moved login throttle into dedicated module while preserving its call sites.
 - The new latency fields are **sample-based estimates**, not network uptime or voice quality certification.
 - Full Worker build, cloud load and browser/device E2E remain NOT VERIFIED.
+
+## E-006 — Sprint 9 tenant follow-up workflow
+
+- `npm test` exit 0, `docs/evidence/sprint9-local.log`.
+- SQLite test proves tenant A cannot mutate tenant B's request through the production UPDATE statement and validates allowed status values.
+- Real authenticated Cloudflare/D1 API/browser integration still unverified (dependency/staging blocker).
