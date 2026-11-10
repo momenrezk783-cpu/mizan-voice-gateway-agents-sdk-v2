@@ -1,5 +1,6 @@
 # FOLLOW_UP
 
-On branch `fix/remove-response-language-and-raw-audio-checks`, removed the custom Whisper `initial_prompt` and the extra LLM response-language instructions, while preserving Whisper's `language: "ar"` and the existing TTS language configuration.
-Removed the added per-sample clamp/invalid-value sanitization from raw Float32 audio conversion; the PCM worklet's existing speech detection and chunking were left unchanged, and no raw-audio logging was present in the inspected files.
-Source changes were reread for verification, but no build, runtime test, PR, merge, or deployment was performed; `main` and Production remain unchanged.
+On branch `feat/preline-ui-refresh`, completed the Preline-inspired responsive layer and added a persistent Arabic/English switcher across the landing, login, admin, client, search, and live voice pages, including RTL/LTR direction handling and translations for the primary interface.
+The live voice page loads the shared language script only; its microphone, PCM, WebSocket, and audio playback logic were not changed, and the five static HTML pages were verified to differ from `main` only by the added stylesheet/script references.
+Static HTML/inline-JS checks, JavaScript syntax checks, CSS brace checks, and HTTP 200 checks passed; visual browser testing was blocked by missing Chromium system libraries and TypeScript checking was unavailable because dependencies are not installed, so no PR, merge, or deployment was performed.
+A separate Cloudflare Pages static preview was attempted from the local workspace, but `npx wrangler` produced no output and had to be stopped; no Preview was deployed and no production resources or routes were changed. Next step: obtain a complete authenticated checkout with working Wrangler 4.135.0+ (or another verified deployment path), then publish the UI-only preview without backend bindings.
