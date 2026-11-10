@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>محرك البحث الداخلي — ميزان هيد كوارتر</title>
+<link rel="stylesheet" href="/css/dashboard.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sb">
+    <a href="/" class="lg">
+      <div class="lm"><img src="/images/mizan-hq-logo.webp" alt="Mizan HQ" style="width:40px;height:40px;object-fit:contain;background:#fff;border-radius:8px"></div>
+      <div class="lt"><b>ميزان هيد كوارتر</b><span>INTERNAL SEARCH</span></div>
+    </a>
+    <nav class="nvs">
+      <a class="nv on" href="/search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
+        محرك البحث الداخلي
+      </a>
+      <a class="nv" href="/client">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg>
+        بوابة المنشأة
+      </a>
+      <a class="nv" href="/dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"></path></svg>
+        لوحة المدير العام
+      </a>
+    </nav>
+  </aside>
+  <div class="mn">
+    <header class="tb">
+      <b>محرك البحث الداخلي المخصص (Frontend Shell)</b>
+      <div class="sp"></div>
+      <a href="/client" class="btn o sm">العودة للوحة التحكم</a>
+    </header>
+    <main class="ct">
+      <div class="hd">
+        <div><h1>محرك البحث الداخلي</h1><p>صفحة فرونت إند مجهزة بالكامل لربط الباك إند الخاص بك لاحقاً (بدون بحث على الإنترنت الخارجي)</p></div>
+        <span class="bd bl">جاهز للربط البرمجي</span>
+      </div>
+      <div class="card">
+        <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+          <div style="flex:1;min-width:260px"><input id="standalone-search-input" type="search" placeholder="ادخل كلمات البحث الداخلي..."></div>
+          <select id="standalone-search-scope" style="width:200px">
+            <option value="all">كل المصادر الداخلية</option>
+            <option value="docs">المستندات والعقود</option>
+            <option value="kb">قاعدة المعرفة</option>
+            <option value="calls">سجلات المكالمات</option>
+          </select>
+          <button class="btn" onclick="runStandaloneSearch()">بحث</button>
+        </div>
+        <div class="chips">
+          <button class="chip on">الكل</button>
+          <button class="chip">تطابق نصي</button>
+          <button class="chip">بحث دلالي (Vector/RAG)</button>
+        </div>
+      </div>
+      <div class="card" id="standalone-search-results" style="min-height:360px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border-style:dashed">
+        <h3 id="st-res-title">مساحة نتائج محرك البحث الداخلي</h3>
+        <p class="sub" id="st-res-desc" style="max-width:500px;margin-top:8px">اربط الباك إند الخاص بك في الدالة runStandaloneSearch() لعرض نتائج البحث الداخلي في هذه الحاوية.</p>
+      </div>
+    </main>
+  </div>
+</div>
+<script>
+function runStandaloneSearch() {
+  const q = document.getElementById('standalone-search-input').value.trim();
+  const scope = document.getElementById('standalone-search-scope').value;
+  // TODO: Plug in your custom internal search backend API here
+  document.getElementById('st-res-title').textContent = q ? `تم استلام استعلام البحث الداخلي: "${q}"` : 'مساحة نتائج محرك البحث الداخلي';
+  document.getElementById('st-res-desc').textContent = `النطاق: ${scope} — جاهز لاستقبال JSON من الباك إند الخاص بك.`;
+}
+</script>
+</body>
+</html>
