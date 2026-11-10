@@ -16,6 +16,7 @@ const mappings = [
   ['/css/dashboard.css', 'public/css/dashboard.css', 'text/css; charset=utf-8'],
   ['/css/voice.css', 'public/css/voice.css', 'text/css; charset=utf-8'],
   ['/js/onboarding.js', 'public/js/onboarding.js', 'application/javascript; charset=utf-8'],
+  ['/js/search-ui.js', 'public/js/search-ui.js', 'application/javascript; charset=utf-8'],
 ];
 const assets = Object.fromEntries(mappings.map(([url, file, type]) => [url, { body: readFileSync(resolve(root, file), 'utf8'), contentType: type }]));
 const result = '// Generated from public/ by npm run assets:sync. Do not edit by hand.\n' +

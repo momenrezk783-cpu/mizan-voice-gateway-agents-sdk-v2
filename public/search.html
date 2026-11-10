@@ -41,16 +41,16 @@
     </header>
     <main class="ct">
       <div class="hd">
-        <div><h1>محرك البحث الداخلي</h1><p>صفحة فرونت إند مجهزة بالكامل لربط الباك إند الخاص بك لاحقاً (بدون بحث على الإنترنت الخارجي)</p></div>
-        <span class="bd bl">جاهز للربط البرمجي</span>
+        <div><h1>محرك البحث الداخلي</h1><p>بحث نصي في قاعدة المعرفة وسجل المكالمات داخل حساب منشأتك (بعد تسجيل الدخول)</p></div>
+        <span class="bd bl">بحث نصي</span>
       </div>
       <div class="card">
         <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
           <div style="flex:1;min-width:260px"><input id="standalone-search-input" type="search" placeholder="ادخل كلمات البحث الداخلي..."></div>
           <select id="standalone-search-scope" style="width:210px">
             <option value="all">كل المصادر الداخلية</option>
-            <option value="docs">المستندات والعقود</option>
-            <option value="kb">قاعدة المعرفة</option>
+            <option value="docs" disabled>المستندات والعقود — لاحقاً</option>
+            <option value="knowledge">قاعدة المعرفة</option>
             <option value="calls">سجلات المكالمات</option>
           </select>
           <button class="btn" onclick="runStandaloneSearch()">بحث داخلي</button>
@@ -58,7 +58,7 @@
         <div class="chips">
           <button class="chip on">الكل</button>
           <button class="chip">تطابق نصي</button>
-          <button class="chip">بحث دلالي (Vector/RAG)</button>
+          <button class="chip" disabled>بحث دلالي — لاحقاً</button>
         </div>
       </div>
       <div class="card" id="standalone-search-results" style="min-height:360px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border-style:dashed;background:#FBFDFF">
@@ -66,17 +66,23 @@
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
         </div>
         <h3 id="st-res-title">مساحة نتائج محرك البحث الداخلي</h3>
-        <p class="sub" id="st-res-desc" style="max-width:500px;margin-top:8px">اربط الباك إند الخاص بك في الدالة runStandaloneSearch() لعرض نتائج البحث الداخلي في هذه الحاوية.</p>
+        <p class="sub" id="st-res-desc" style="max-width:500px;margin-top:8px">اكتب حرفين على الأقل؛ النتائج تُجلب من بيانات المنشأة الحالية فقط.</p>
       </div>
     </main>
   </div>
 </div>
+<script src="/js/search-ui.js"></script>
 <script>
-function runStandaloneSearch() {
+async function runStandaloneSearch() {
   const q = document.getElementById('standalone-search-input').value.trim();
   const scope = document.getElementById('standalone-search-scope').value;
-  document.getElementById('st-res-title').textContent = q ? `تم استلام استعلام البحث الداخلي: "${q}"` : 'مساحة نتائج محرك البحث الداخلي';
-  document.getElementById('st-res-desc').textContent = `النطاق: ${scope} — جاهز لاستقبال JSON من الباك إند الخاص بك.`;
+  if (q.length < 2) { MizanSearch.render('standalone-search-results', [], 'اكتب حرفين على الأقل.'); return; }
+  try {
+    MizanSearch.render('standalone-search-results', [], 'جاري البحث...');
+    const response = await fetch('/api/client/search?' + new URLSearchParams({q, scope}), {credentials:'same-origin'});
+    if (!response.ok) throw new Error(String(response.status));
+    MizanSearch.render('standalone-search-results', (await response.json()).results || []);
+  } catch { MizanSearch.render('standalone-search-results', [], 'تعذر البحث. تأكد من تسجيل الدخول إلى بوابة المنشأة.'); }
 }
 </script>
 </body>

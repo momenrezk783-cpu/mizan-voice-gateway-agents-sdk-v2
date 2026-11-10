@@ -414,14 +414,14 @@
         </div>
       </div>
 
-      <!-- 10. INTERNAL SEARCH ENGINE FRONTEND PLACEHOLDER -->
+      <!-- 10. Internal text search over tenant knowledge and redacted call records -->
       <div id="page-search" class="page">
         <div class="hd">
           <div>
             <h1>محرك البحث الداخلي</h1>
-            <p>واجهة فرونت إند مجهزة للبحث الداخلي (معدة لربط الباك إند الخاص بك لاحقاً دون اتصال بالإنترنت الخارجي)</p>
+            <p>بحث نصي فعلي في قاعدة المعرفة وسجلات المكالمات التابعة لمنشأتك</p>
           </div>
-          <span class="bd bl">جاهز لربط الباك إند (Frontend Ready)</span>
+          <span class="bd bl">البحث النصي متاح</span>
         </div>
 
         <div class="card">
@@ -431,20 +431,20 @@
             </div>
             <select id="internal-search-scope" style="width:210px">
               <option value="all">جميع المصادر الداخلية</option>
-              <option value="documents">المستندات والملفات</option>
+              <option value="documents" disabled>المستندات والملفات — لاحقًا</option>
               <option value="knowledge">قاعدة المعرفة</option>
               <option value="calls">سجلات المكالمات</option>
-              <option value="clients">ملفات العملاء</option>
+              <option value="clients" disabled>ملفات العملاء — لاحقًا</option>
             </select>
-            <button type="button" class="btn" onclick="triggerInternalSearchPlaceholder()">
+            <button type="button" class="btn" onclick="runInternalSearch()">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
               بحث داخلي
             </button>
           </div>
           <div class="chips">
             <button type="button" class="chip on" onclick="selectSearchFilter(this, 'all')">الكل</button>
-            <button type="button" class="chip" onclick="selectSearchFilter(this, 'exact')">تطابق تام</button>
-            <button type="button" class="chip" onclick="selectSearchFilter(this, 'semantic')">بحث دلالي داخلي</button>
+            <button type="button" class="chip" onclick="selectSearchFilter(this, 'text')">مطابقة نصية</button>
+            <button type="button" class="chip" disabled title="لم يتم تنفيذ البحث الدلالي بعد">بحث دلالي — لاحقًا</button>
             <button type="button" class="chip" onclick="selectSearchFilter(this, 'recent')">الأحدث أولاً</button>
           </div>
         </div>
@@ -455,7 +455,7 @@
           </div>
           <h3 id="search-placeholder-title">مساحة عرض نتائج محرك البحث الداخلي</h3>
           <p class="sub" id="search-placeholder-desc" style="max-width:520px;line-height:1.8;margin-top:6px">
-            هذه الصفحة مجهزة بالكامل في الفرونت إند (`#internal-search-results`) ومفصولة عن الإنترنت الخارجي. يمكنك ربط دالة `window.onInternalSearch(query, scope, filter)` بالباك إند المحلي الخاص بك في أي وقت لعرض النتائج هنا.
+            اكتب عبارة من حرفين على الأقل للبحث في البيانات المحفوظة. البحث الدلالي والمستندات غير متاحين بعد.
           </p>
         </div>
       </div>
@@ -465,6 +465,7 @@
 </div>
 
 <script src="/js/onboarding.js"></script>
+<script src="/js/search-ui.js"></script>
 <script>
 let allSessions = [];
 let currentCallFilter = 'all';
@@ -782,16 +783,20 @@ function selectSearchFilter(btn, filterKey) {
   window.currentInternalSearchFilter = filterKey;
 }
 
-function triggerInternalSearchPlaceholder() {
+async function runInternalSearch() {
   const q = document.getElementById('internal-search-query').value.trim();
   const scope = document.getElementById('internal-search-scope').value;
   const filter = window.currentInternalSearchFilter || 'all';
-  if (typeof window.onInternalSearch === 'function') {
-    window.onInternalSearch(q, scope, filter);
-    return;
-  }
-  document.getElementById('search-placeholder-title').textContent = q ? `الاستعلام الجاهز للإرسال للباك إند: "${q}"` : 'مساحة عرض نتائج محرك البحث الداخلي';
-  document.getElementById('search-placeholder-desc').textContent = `النطاق المحدد: ${scope} | الفلتر: ${filter} — اربط الباك إند الخاص بك عبر الدالة window.onInternalSearch(query, scope, filter) لعرض النتائج هنا.`;
+  if (q.length < 2) { MizanSearch.render('internal-search-results', [], 'اكتب حرفين على الأقل للبحث.'); return; }
+  try {
+    MizanSearch.render('internal-search-results', [], 'جاري البحث...');
+    const response = await fetch('/api/client/search?' + new URLSearchParams({q, scope}), {credentials:'same-origin'});
+    if (!response.ok) throw new Error('Search failed: ' + response.status);
+    const data = await response.json();
+    const hits = Array.isArray(data.results) ? data.results : [];
+    if (filter === 'recent') hits.sort((a,b) => (b.timestamp||0)-(a.timestamp||0));
+    MizanSearch.render('internal-search-results', hits);
+  } catch (err) { MizanSearch.render('internal-search-results', [], 'تعذر تنفيذ البحث. تحقق من الاتصال وسجل الدخول.'); }
 }
 
 async function logoutUser() {

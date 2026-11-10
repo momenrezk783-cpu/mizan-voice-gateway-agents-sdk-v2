@@ -70,6 +70,7 @@ const promptMod = await importTs("src/lib/conversation-manager/prompt.ts");
 const dbMod = await importTs("src/lib/conversation-manager/db.ts");
 const evaluatorMod = await importTs("src/lib/conversation-manager/evaluator.ts");
 const cryptoMod = await importTs("src/lib/crypto.ts");
+const searchMod = await importTs("src/lib/search.ts");
 
 const {
   stripMarks,
@@ -613,6 +614,22 @@ await test("applies schema.sql + migrations 001/002/003 and executes all D1 quer
     assert.equal(sessionRow.booking_confirmed, 1);
     assert.equal(sessionRow.selected_slot, "2026-11-12 16:30");
     assert.equal(sessionRow.selected_doctor, "د. كريم");
+    await d1.prepare("INSERT INTO tenants (id, slug, name) VALUES (?, ?, ?)")
+      .bind("c_other", "other", "شركة أخرى").run();
+    await d1.prepare("INSERT INTO tenant_knowledge (id, tenant_slug, category, faq_text) VALUES (?, ?, ?, ?)")
+      .bind("kn-other", "other", "general", "سرية تامة تخص شركة أخرى").run();
+    await d1.prepare("INSERT INTO tenant_knowledge (id, tenant_slug, category, faq_text) VALUES (?, ?, ?, ?)")
+      .bind("kn-a", "al-nour", "hours", "مواعيد العمل صباحاً").run();
+    const localResults = await searchMod.searchClientData(d1, "al-nour", "مواعيد", "knowledge");
+    assert.equal(localResults.length, 1);
+    assert.equal(localResults[0].id, "kn-a");
+    assert.equal((await searchMod.searchClientData(d1, "al-nour", "سرية", "all")).length, 0);
+    assert.equal((await searchMod.searchClientData(d1, "al-nour", "كريم", "calls")).length, 1);
+    const adminResults = await searchMod.searchAdminData(d1, "شركة أخرى");
+    assert.ok(adminResults.some(r => r.kind === "tenant" && r.id === "other"));
+    const parsed = searchMod.parseSearchInput(new URL("https://x/api/client/search?q=%D9%83%D8%B1%D9%8A%D9%85&scope=knowledge"), ["all", "knowledge", "calls"]);
+    assert.equal(parsed.q, "كريم");
+    assert.equal(searchMod.parseSearchInput(new URL("https://x/api/client/search?q=abc&scope=documents"), ["all", "knowledge", "calls"]).status, 422);
     assert.ok(sessionRow.caller_name_enc);
     assert.ok(sessionRow.caller_phone_enc);
 

@@ -175,24 +175,24 @@
         </div>
       </div>
 
-      <!-- 5. INTERNAL SEARCH ENGINE FRONTEND PLACEHOLDER -->
+      <!-- 5. Internal text search over tenant names and calls -->
       <div id="page-search" class="page">
         <div class="hd">
-          <div><h1>محرك البحث الداخلي الشامل</h1><p>واجهة فرونت إند مجهزة لربط محرك البحث الداخلي الخاص بك لاحقاً</p></div>
-          <span class="bd bl">Frontend Placeholder</span>
+          <div><h1>محرك البحث الداخلي الشامل</h1><p>بحث نصي في المنشآت وسجلات المكالمات</p></div>
+          <span class="bd bl">بحث نصي متاح</span>
         </div>
         <div class="card">
           <div style="display:flex;gap:12px;flex-wrap:wrap">
             <div style="flex:1;min-width:260px"><input id="adm-search-q" type="search" placeholder="ابحث في بيانات المنشآت، السجلات، أو الفهارس الداخلية..."></div>
-            <button class="btn" onclick="document.getElementById('adm-search-status').textContent='الاستعلام جاهز للإرسال إلى الباك إند الخاص بك: ' + document.getElementById('adm-search-q').value">بحث داخلي</button>
+            <button class="btn" onclick="runAdminSearch()">بحث داخلي</button>
           </div>
         </div>
-        <div class="card" style="min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border-style:dashed;background:#FBFDFF">
+        <div class="card" id="admin-search-results" style="min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border-style:dashed;background:#FBFDFF">
           <div class="ki" style="width:52px;height:52px;border-radius:15px;margin-bottom:12px">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
           </div>
           <h3 id="adm-search-status">منطقة نتائج محرك البحث الداخلي</h3>
-          <p class="sub" style="max-width:480px;margin-top:8px">جاهزة للربط البرمجي بالباك إند المحلي الخاص بك في وقت لاحق.</p>
+          <p class="sub" style="max-width:480px;margin-top:8px">اكتب اسم منشأة أو موضوع مكالمة للبحث النصي في البيانات الموجودة.</p>
         </div>
       </div>
     </main>
@@ -200,6 +200,7 @@
 </div>
 
 <script src="/js/onboarding.js"></script>
+<script src="/js/search-ui.js"></script>
 <script>
 const INDUSTRY_LABELS = {
   general: 'عام / شركات وأعمال',
@@ -345,6 +346,17 @@ async function loadGuards() {
       </div>
     `).join('');
   } catch (e) {}
+}
+
+async function runAdminSearch() {
+  const q = document.getElementById('adm-search-q').value.trim();
+  if (q.length < 2) { MizanSearch.render('admin-search-results', [], 'اكتب حرفين على الأقل.'); return; }
+  try {
+    MizanSearch.render('admin-search-results', [], 'جاري البحث...');
+    const response = await fetch('/api/admin/search?' + new URLSearchParams({q}), {credentials:'same-origin'});
+    if (!response.ok) throw new Error('Search failed: ' + response.status);
+    MizanSearch.render('admin-search-results', (await response.json()).results || []);
+  } catch { MizanSearch.render('admin-search-results', [], 'تعذر تنفيذ البحث. تحقق من الاتصال والصلاحيات.'); }
 }
 
 async function saveGlobalConfig() {

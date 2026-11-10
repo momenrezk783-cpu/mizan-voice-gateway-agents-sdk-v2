@@ -31,4 +31,6 @@ assert.ok(gateway.includes('origin !== url.origin'), 'Reject cross-site cookie P
 assert.ok(gateway.includes('loginThrottleCheck(env, rateKeys, now)'), 'Throttle login attempts');
 assert.ok(gateway.includes('Retry-After'), 'Tell clients when rate limit expires');
 assert.ok(readFileSync('src/lib/deepgram-stt.ts','utf8').includes('onStatus?.("unavailable")'), 'Notify callers when STT exhausts retry attempts');
+assert.ok(readFileSync('public/js/search-ui.js','utf8').includes('title.textContent ='), 'Search renders user content as text');
+assert.ok(readFileSync('src/lib/search.ts','utf8').includes('ct.tenant_slug = cs.tenant_slug'), 'Call search is tenant scoped');
 console.log('Security and honest-product regression checks passed (session TTL, tampering, claims, XSS sinks, tenant isolation, empty states).');

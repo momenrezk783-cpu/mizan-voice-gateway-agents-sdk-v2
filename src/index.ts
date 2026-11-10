@@ -16,6 +16,7 @@ import { resolveTenant, resolveTenantByDomain, getTenantKnowledge, invalidateTen
 import { getSessionUser, createSessionResponse, clearSessionCookie, canAccessTenant, hashPassword, verifyPassword } from "./lib/auth";
 import { encryptPII, decryptPII, redactPII } from "./lib/crypto";
 import { EMBEDDED_UI_ASSETS } from "./lib/ui-assets";
+import { parseSearchInput, searchClientData, searchAdminData } from "./lib/search";
 
 // Re-export the Agent class so Wrangler can find it
 export { MizanVoiceAgent };
@@ -344,6 +345,13 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   const slug = user.tenantSlug;
   const path = url.pathname;
 
+  // Search is scoped exclusively to the tenant from the signed session.
+  if (path === "/api/client/search" && request.method === "GET") {
+    const params = parseSearchInput(url, ["all", "knowledge", "calls"]);
+    if ("error" in params) return json({ error: params.error }, params.status);
+    return json({ results: await searchClientData(env.DB, slug, params.q, params.scope), mode: "text" });
+  }
+
   // GET /api/client/sessions — list call sessions
   if (path === "/api/client/sessions" && request.method === "GET") {
     const rows = await env.DB.prepare(
@@ -518,6 +526,12 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
   if (user.role !== "super_admin") return json({ error: "Forbidden" }, 403);
 
   const path = url.pathname;
+
+  if (path === "/api/admin/search" && request.method === "GET") {
+    const params = parseSearchInput(url, ["all"]);
+    if ("error" in params) return json({ error: params.error }, params.status);
+    return json({ results: await searchAdminData(env.DB, params.q), mode: "text" });
+  }
 
   // GET /api/admin/tenants
   if (path === "/api/admin/tenants" && request.method === "GET") {
