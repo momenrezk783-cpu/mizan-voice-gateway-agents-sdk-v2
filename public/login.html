@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تسجيل الدخول — Mizan Voice AI</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary: #0B2D4B;
+  --primary-2: #0C355A;
+  --secondary: #1BA6B8;
+  --secondary-2: #2BB8C7;
+  --bg: #F7F9FC;
+  --card: #FFFFFF;
+  --border: #E6EDF5;
+  --success: #24B26B;
+  --danger: #E25555;
+  --text-sec: #334E68;
+  --text-muted: #627D98;
+  --font: "IBM Plex Sans Arabic", Tahoma, sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  font-family: var(--font);
+  color: var(--primary);
+  direction: rtl;
+  -webkit-font-smoothing: antialiased;
+}
+a { text-decoration: none; color: inherit; transition: all 0.2s ease; }
+
+.lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--primary);
+}
+.lm {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  box-shadow: 0 6px 16px rgba(11, 45, 75, 0.18);
+}
+.lm span {
+  display: block;
+  width: 3px;
+  border-radius: 99px;
+  background: var(--secondary-2);
+}
+.lm span:nth-child(1) { height: 10px; opacity: 0.75; }
+.lm span:nth-child(2) { height: 18px; background: #FFFFFF; }
+.lm span:nth-child(3) { height: 24px; background: var(--secondary-2); }
+.lm span:nth-child(4) { height: 16px; background: #FFFFFF; }
+.lm span:nth-child(5) { height: 10px; opacity: 0.75; }
+
+.lg2 {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  background: var(--bg);
+}
+.fm {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 56px 96px;
+  background: #FFFFFF;
+  border-left: 1px solid var(--border);
+}
+.fm-card {
+  max-width: 440px;
+  width: 100%;
+  margin: 0 auto;
+}
+.fm h1 {
+  font-size: 30px;
+  margin: 28px 0 8px;
+  color: var(--primary);
+  letter-spacing: -0.015em;
+}
+.fm p {
+  color: var(--text-muted);
+  margin: 0 0 28px;
+  font-size: 15px;
+  line-height: 1.75;
+}
+label {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--primary);
+}
+input {
+  width: 100%;
+  height: 48px;
+  border: 1px solid #D1DFEE;
+  border-radius: 12px;
+  padding: 0 16px;
+  font: 15px var(--font);
+  margin-bottom: 20px;
+  color: var(--primary);
+  background: var(--bg);
+  transition: all 0.2s ease;
+}
+input:focus {
+  outline: none;
+  background: #FFFFFF;
+  border-color: var(--secondary);
+  box-shadow: 0 0 0 3.5px rgba(27, 166, 184, 0.16);
+}
+.btn {
+  height: 50px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 13px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-2) 100%);
+  color: #FFFFFF;
+  font: 600 15.5px var(--font);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(11, 45, 75, 0.22);
+  transition: all 0.2s ease;
+  width: 100%;
+  justify-content: center;
+}
+.btn:hover {
+  background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-2) 100%);
+  box-shadow: 0 10px 26px rgba(27, 166, 184, 0.3);
+  transform: translateY(-1.5px);
+}
+.hlp {
+  margin-top: 24px;
+  font-size: 13.5px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.login-error {
+  background: #FCEEEE;
+  color: var(--danger);
+  border: 1px solid rgba(226, 85, 85, 0.3);
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 16px;
+  display: none;
+  text-align: center;
+}
+
+/* Left Enterprise AI Showcase Panel */
+.pn {
+  background:
+    radial-gradient(circle at 25% 20%, rgba(43, 184, 199, 0.24) 0%, transparent 48%),
+    linear-gradient(155deg, var(--primary) 0%, var(--primary-2) 55%, #071D31 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 26px;
+  padding: 64px;
+  text-align: center;
+  color: #FFFFFF;
+  position: relative;
+  overflow: hidden;
+}
+.pn .card {
+  max-width: 400px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+@keyframes wv { 50% { transform: scaleY(0.28); } }
+.wave {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  height: 56px;
+}
+.wave i {
+  width: 4.5px;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--secondary-2);
+  animation: wv 1.2s ease-in-out infinite;
+}
+.wave i:nth-child(2n) { animation-delay: 0.2s; background: #FFFFFF; }
+.wave i:nth-child(3n) { animation-delay: 0.45s; background: var(--secondary); }
+.wave i:nth-child(5n) { animation-delay: 0.7s; }
+
+.pn h2 {
+  margin: 0;
+  font-size: 26px;
+  color: #FFFFFF;
+}
+.pn p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.8;
+  max-width: 400px;
+  font-size: 15.5px;
+}
+.pn-badges {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.pn-badge {
+  padding: 6px 14px;
+  border-radius: 99px;
+  background: rgba(27, 166, 184, 0.2);
+  border: 1px solid rgba(43, 184, 199, 0.38);
+  color: #DDF7FA;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+@media (max-width: 1024px) {
+  .lg2 { grid-template-columns: 1fr; }
+  .fm { padding: 36px 24px; }
+  .pn { padding: 44px 24px; }
+}
+</style>
+</head>
+<body data-tour-context="login">
+<div class="pg lg2">
+  <div class="fm">
+    <div class="fm-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <a href="/" class="lg">
+          <div class="lm" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+          <span>Mizan <small style="font-weight:500;font-size:12.5px;color:var(--secondary)">ميزان كونسلت</small></span>
+        </a>
+        <button type="button" class="mz-tour-trigger-btn" onclick="MizanOnboarding.start('login')">🎯 جولة تعريفية</button>
+      </div>
+      <h1>تسجيل دخول المنشأة</h1>
+      <p>أدخل بيانات حسابك للوصول إلى سجل المكالمات، قاعدة المعرفة، وتحليلات المساعد الصوتي لمنشأتك.</p>
+      <form id="login-form-box" onsubmit="return login(event)">
+        <label for="email">البريد الإلكتروني المؤسسي</label>
+        <input id="email" type="email" placeholder="name@organization.com" dir="ltr" required>
+        <label for="password">كلمة المرور</label>
+        <input id="password" type="password" placeholder="••••••••" dir="ltr" required>
+        <button type="submit" class="btn">تسجيل الدخول إلى المنصة ←</button>
+      </form>
+      <div class="login-error" id="error"></div>
+      <div class="hlp">نسيت كلمة المرور؟ تواصل مع فريق ميزان كونسلت • <a href="/" style="color:var(--secondary);font-weight:700">العودة للرئيسية</a></div>
+    </div>
+  </div>
+  <div class="pn">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;font-size:13px;color:rgba(255,255,255,0.8)">
+        <span>Mizan AI Voice Engine</span>
+        <span style="background:rgba(36,178,107,0.22);color:#7EF2B8;padding:3px 10px;border-radius:99px;font-weight:700">متصل 24/7</span>
+      </div>
+      <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+    <h2>بوابة إدارة الوكلاء الصوتيين</h2>
+    <p>تابع مكالمات مساعدك الصوتي لحظياً، وحدّث الأسئلة الشائعة، واضبط شخصية الصوت لمنشأتك من منصة سحابية موحدة.</p>
+    <div class="pn-badges">
+      <span class="pn-badge">🔒 تشفير AES-GCM 256</span>
+      <span class="pn-badge">⚖️ متوافق مع قانون 151 لسنة 2020</span>
+      <span class="pn-badge">⚡ استجابة فورية باللهجة المصرية</span>
+    </div>
+  </div>
+</div>
+<script src="/js/onboarding.js"></script>
+<script>
+async function login(e) {
+  e.preventDefault();
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('error');
+  errEl.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/client/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || 'خطأ في تسجيل الدخول';
+      errEl.style.display = 'block';
+      return false;
+    }
+    const roleCtx = data.user.role === 'super_admin' ? 'admin' : 'client';
+    if (!localStorage.getItem('mizan_onboarding_done_' + roleCtx)) {
+      sessionStorage.setItem('mizan_trigger_onboarding', '1');
+    }
+    if (data.user.role === 'super_admin') {
+      window.location.href = '/dashboard';
+    } else {
+      window.location.href = '/client';
+    }
+  } catch (err) {
+    errEl.textContent = 'حدث خطأ في الاتصال بالخادم. حاول مرة أخرى.';
+    errEl.style.display = 'block';
+  }
+  return false;
+}
+</script>
+</body>
+</html>
