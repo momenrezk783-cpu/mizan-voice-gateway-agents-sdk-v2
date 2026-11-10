@@ -19,6 +19,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
     "wrangler": "^4.45.0",
-    "typescript": "latest"
+    "typescript": "latest",
+    "@babel/core": "^8.1.0",
+    "@babel/preset-typescript": "^8.0.7"
   }
 }

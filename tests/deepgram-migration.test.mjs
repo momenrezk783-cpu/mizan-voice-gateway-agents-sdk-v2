@@ -5,8 +5,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const babel = require("/usr/share/nodejs/@babel/core");
-const presetTypescript = require("/usr/share/nodejs/@babel/preset-typescript");
+const babel = require("@babel/core");
+const presetTypescript = require("@babel/preset-typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -391,6 +391,18 @@ class MockDeepgramSocket {
   assert.ok(tenantSource.includes("MX8opBj7bbi4G2cE9j2w"), "ElevenLabs voice ID MX8opBj7bbi4G2cE9j2w must be preserved in src/lib/tenant.ts");
   assert.ok(indexSource.includes("MX8opBj7bbi4G2cE9j2w"), "ElevenLabs voice ID MX8opBj7bbi4G2cE9j2w must be preserved in src/index.ts");
   assert.ok(!indexSource.includes("audioNode.connect(audioCtx.destination)"), "Mic-to-speaker loopback must be removed from src/index.ts");
+  assert.ok(!agentSource.includes("Half-duplex echo protection"), "Server must not time-gate microphone input during TTS");
+  assert.ok(!agentSource.includes("agentSpeakingUntil"), "Estimated TTS duration must not suppress caller audio");
+  assert.ok(agentSource.includes('command: "barge_in"'), "Deepgram speech-start events must interrupt current browser playback");
+  assert.ok(indexSource.includes("echoCancellation:true"), "Browser microphone capture must request acoustic echo cancellation");
+  assert.ok(!indexSource.includes("audioCtx.currentTime<playbackTime+0.25"), "Client must not block microphone frames during playback");
+  assert.ok(indexSource.includes("function stopPlayback()"), "Client must stop queued playback when caller barges in");
+  const wranglerConfig = fs.readFileSync(path.join(rootDir, "wrangler.toml"), "utf8");
+  assert.ok(wranglerConfig.includes("MX8opBj7bbi4G2cE9j2w"), "Wrangler documentation must identify the configured ElevenLabs voice ID");
+  const deployWorkflow = fs.readFileSync(path.join(rootDir, ".github/workflows/deploy.yml"), "utf8");
+  assert.ok(deployWorkflow.includes("'src/**'") && deployWorkflow.includes("'public/**'"), "Deploy workflow must watch the root project source and assets");
+  assert.ok(deployWorkflow.includes("npm test"), "Production deploy workflow must run the test suite");
+  assert.ok(!deployWorkflow.includes("working-directory: ./mizan-voice-gateway-v2"), "Deploy workflow must not build the obsolete nested project");
 
   // Verify Egyptian Arabic caller title extraction and banned-word speech sanitization still work
   const caller = extractCallerTitleAndName("مساء الخير أنا دكتور محمد من القاهرة");

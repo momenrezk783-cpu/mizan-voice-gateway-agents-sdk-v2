@@ -4,9 +4,13 @@ on:
   push:
     branches:
       - main
-      - feat/hq-elevenlabs-conversation-engine
     paths:
-      - 'mizan-voice-gateway-v2/**'
+      - 'src/**'
+      - 'public/**'
+      - 'tests/**'
+      - 'wrangler.toml'
+      - 'package.json'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 permissions:
@@ -33,9 +37,10 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        working-directory: ./mizan-voice-gateway-v2
         run: npm install --no-audit --no-fund
 
-      - name: Deploy to Cloudflare
-        working-directory: ./mizan-voice-gateway-v2
+      - name: Test
+        run: npm test
+
+      - name: Deploy existing Mizan Voice Gateway Worker
         run: npx wrangler deploy --config wrangler.toml
