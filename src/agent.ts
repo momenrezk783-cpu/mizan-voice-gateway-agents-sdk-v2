@@ -19,7 +19,8 @@ import {
   detectNonEgyptian,
   extractCallerTitleAndName,
   guardUnconfirmedActionClaim,
-   resolvePersonAddressPolicy,
+  guardUnconfirmedBookingClaim,
+  resolvePersonAddressPolicy,
   sanitizeForSpeech,
   sanitizeForSpeechWithViolations,
   type ConversationState,
@@ -57,8 +58,6 @@ import { redactPII } from "./lib/crypto";
 import {
   DeepgramStreamingSession,
   computePcm16Rms,
-  detectTranscriptLanguage,
-  isMeaningfulTranscript,
   normalizeToLinear16Pcm,
   type DeepgramStreamConfig
 } from "./lib/deepgram-stt";
@@ -118,16 +117,10 @@ export class MizanVoiceAgent extends Agent<Env> {
   private sessionClosed = false;
   private activeConnection: Connection | null = null;
   private deepgramSession: DeepgramStreamingSession | null = null;
-  private useWorkersAiStt = false;
-  private whisperChunks: Uint8Array[] = [];
-  private whisperTotalBytes = 0;
-  private whisperSpeechDetected = false;
-  private whisperLastSpeechAt = 0;
-  private whisperSilenceTimer: ReturnType<typeof setTimeout> | null = null;
-  private whisperTranscribing = false;
   private clientAudioFormat: "linear16" | "float32" = "linear16";
   private conversation: ChatMessage[] = [];
   private processingTurn = false;
+  private agentSpeakingUntil = 0;
   private lastProcessedTranscript = "";
   private lastProcessedAt = 0;
   private responseLanguage: "ar" | "en" = "ar";
@@ -242,62 +235,68 @@ export class MizanVoiceAgent extends Agent<Env> {
       return;
     }
 
+    const deepgramKey = (this.env.DEEPGRAM_API_KEY || "").trim();
+    if (!deepgramKey) {
+      console.error("DEEPGRAM_API_KEY secret is not configured on mizan-voice-gateway");
+      connection.send(
+        JSON.stringify({
+          type: "error",
+          message: "مفتاح خدمة التعرف الصوتي (DEEPGRAM_API_KEY) غير مُعد في الخادم."
+        })
+      );
+      connection.close(1011, "Missing DEEPGRAM_API_KEY secret");
+      return;
+    }
+
+    // Close any pre-existing STT session to guarantee a single active Deepgram session per call
     if (this.deepgramSession) {
       this.deepgramSession.close();
       this.deepgramSession = null;
     }
-    this.clearWhisperBuffer();
+
     this.sessionClosed = false;
     this.activeConnection = connection;
 
-    const deepgramKey = (this.env.DEEPGRAM_API_KEY || "").trim();
-    if (deepgramKey) {
-      this.useWorkersAiStt = false;
-      this.deepgramSession = new DeepgramStreamingSession(
-        deepgramKey,
-        {
-          onInterimTranscript: (interimText) => {
-            if (this.sessionClosed) return;
-            if (interimText) {
-              try {
-                connection.send(JSON.stringify({ type: "status", status: "transcribing" }));
-              } catch {
-                // Ignore if socket closed
-              }
-            }
-          },
-          onSpeechStarted: () => {
-            if (this.sessionClosed) return;
+    this.deepgramSession = new DeepgramStreamingSession(
+      deepgramKey,
+      {
+        onInterimTranscript: (interimText) => {
+          if (this.sessionClosed || this.processingTurn) return;
+          // Interim transcripts are never forwarded to the LLM conversation engine.
+          // Send lightweight status indicator only.
+          if (interimText) {
             try {
-              connection.send(JSON.stringify({ type: "control", command: "barge_in" }));
+              connection.send(JSON.stringify({ type: "status", status: "transcribing" }));
             } catch {
-              // Ignore if the browser has already disconnected.
+              // Ignore if socket closed
             }
-          },
-          onFinalTranscript: async (finalText, _confidence, detectedLanguage) => {
-            await this.handleFinalTranscript(connection, finalText, detectedLanguage);
-          },
-          onError: (error) => {
-            console.error("Deepgram STT stream error, enabling Workers AI Whisper fallback:", error.message);
-            this.useWorkersAiStt = true;
           }
         },
-        {
-          model: this.env.DEEPGRAM_MODEL || "nova-3",
-          language: this.env.DEEPGRAM_LANGUAGE || "ar-EG",
-          encoding: "linear16",
-          sampleRate: 16000,
-          channels: 1,
-          endpointingMs: 300,
-          utteranceEndMs: 1000,
-          ...this.deepgramConfigOverride
+        onFinalTranscript: async (finalText, _confidence, detectedLanguage) => {
+          await this.handleFinalTranscript(connection, finalText, detectedLanguage);
+        },
+        onError: (error) => {
+          console.error("Deepgram STT stream error:", error.message);
+        },
+        onStatus: (status) => {
+          if (this.sessionClosed) return;
+          try { connection.send(JSON.stringify({ type: "status", status: `stt_${status}` })); }
+          catch { /* caller disconnected */ }
         }
-      );
-      void this.deepgramSession.connect();
-    } else {
-      console.info("DEEPGRAM_API_KEY not set; using Cloudflare Workers AI Whisper STT fallback");
-      this.useWorkersAiStt = true;
-    }
+      },
+      {
+        model: this.env.DEEPGRAM_MODEL || "nova-3",
+        language: this.env.DEEPGRAM_LANGUAGE || "ar-EG",
+        encoding: "linear16",
+        sampleRate: 16000,
+        channels: 1,
+        endpointingMs: 300,
+        utteranceEndMs: 1000,
+        ...this.deepgramConfigOverride
+      }
+    );
+
+    void this.deepgramSession.connect();
     connection.send(
       JSON.stringify({
         type: "status",
@@ -331,148 +330,32 @@ export class MizanVoiceAgent extends Agent<Env> {
       }
 
       if (control.type === "audio_end") {
-        if (this.useWorkersAiStt || !this.deepgramSession) {
-          void this.flushWhisperAudio(connection);
-        } else {
-          this.deepgramSession?.finalizeUtterance();
-        }
+        this.deepgramSession?.finalizeUtterance();
       }
       return;
     }
 
-    if (this.activeConnection !== connection) {
+    // Do not accept audio before `onConnect` initializes the Deepgram session or after close
+    if (!this.deepgramSession || this.activeConnection !== connection) {
       return;
     }
 
-    const pcm = normalizeToLinear16Pcm(message, this.clientAudioFormat);
-    if (pcm.byteLength === 0) return;
-    const rms = computePcm16Rms(pcm);
-
-    // Full duplex: keep streaming microphone audio while TTS is playing.
-    // Acoustic echo cancellation is requested at capture in the browser; do not
-    // time-gate microphone frames here or the caller cannot interrupt the agent.
+    // Half-duplex echo protection: while the agent is speaking (or in the acoustic tail cooldown),
+    // ignore low/moderate energy microphone frames so TTS speaker playback never loops back into STT.
     const now = Date.now();
-
-    if (this.useWorkersAiStt || !this.deepgramSession) {
-      this.ingestWhisperPcmFrame(connection, pcm, rms, now);
-      return;
+    if (this.processingTurn || now < this.agentSpeakingUntil) {
+      const pcm = normalizeToLinear16Pcm(message, this.clientAudioFormat);
+      const rms = computePcm16Rms(pcm);
+      // Only pass through if user is actively barging in with strong near-field speech
+      if (this.processingTurn || rms < 0.08) {
+        return;
+      }
+      // User barged in with high-energy speech: clear the TTS playback lock
+      this.metrics.bargeIns++;
+      this.agentSpeakingUntil = 0;
     }
 
     this.deepgramSession.sendAudio(message, this.clientAudioFormat);
-  }
-
-  private clearWhisperBuffer() {
-    if (this.whisperSilenceTimer) {
-      clearTimeout(this.whisperSilenceTimer);
-      this.whisperSilenceTimer = null;
-    }
-    this.whisperChunks = [];
-    this.whisperTotalBytes = 0;
-    this.whisperSpeechDetected = false;
-  }
-
-  private ingestWhisperPcmFrame(connection: Connection, pcm: Uint8Array, rms: number, now: number) {
-    if (this.whisperTranscribing || this.processingTurn) return;
-    if (rms >= 0.011) {
-      this.whisperSpeechDetected = true;
-      this.whisperLastSpeechAt = now;
-      this.whisperChunks.push(pcm.slice());
-      this.whisperTotalBytes += pcm.byteLength;
-      if (this.whisperSilenceTimer) {
-        clearTimeout(this.whisperSilenceTimer);
-      }
-      this.whisperSilenceTimer = setTimeout(() => {
-        this.whisperSilenceTimer = null;
-        void this.flushWhisperAudio(connection);
-      }, 650);
-      if (this.whisperTotalBytes >= 16000 * 2 * 9) {
-        void this.flushWhisperAudio(connection);
-      }
-    } else if (this.whisperSpeechDetected && now - this.whisperLastSpeechAt < 450) {
-      this.whisperChunks.push(pcm.slice());
-      this.whisperTotalBytes += pcm.byteLength;
-    }
-  }
-
-  private async flushWhisperAudio(connection: Connection) {
-    if (this.sessionClosed || this.whisperTranscribing || this.processingTurn) return;
-    if (!this.whisperSpeechDetected || this.whisperTotalBytes < 3200) {
-      this.clearWhisperBuffer();
-      return;
-    }
-    const chunks = this.whisperChunks;
-    const totalPcmBytes = this.whisperTotalBytes;
-    this.clearWhisperBuffer();
-    this.whisperTranscribing = true;
-    try {
-      connection.send(JSON.stringify({ type: "status", status: "transcribing" }));
-      const wavBuffer = new ArrayBuffer(44 + totalPcmBytes);
-      const view = new DataView(wavBuffer);
-      const writeAscii = (offset: number, str: string) => {
-        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-      };
-      writeAscii(0, "RIFF");
-      view.setUint32(4, 36 + totalPcmBytes, true);
-      writeAscii(8, "WAVE");
-      writeAscii(12, "fmt ");
-      view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true);
-      view.setUint16(22, 1, true);
-      view.setUint32(24, 16000, true);
-      view.setUint32(28, 32000, true);
-      view.setUint16(32, 2, true);
-      view.setUint16(34, 16, true);
-      writeAscii(36, "data");
-      view.setUint32(40, totalPcmBytes, true);
-      const wavBytes = new Uint8Array(wavBuffer);
-      let offset = 44;
-      for (const chunk of chunks) {
-        wavBytes.set(chunk, offset);
-        offset += chunk.byteLength;
-      }
-      let binary = "";
-      const step = 0x8000;
-      for (let i = 0; i < wavBytes.length; i += step) {
-        binary += String.fromCharCode(...wavBytes.subarray(i, i + step));
-      }
-      const wavBase64 = btoa(binary);
-      let transcriptText = "";
-      try {
-        const res = (await (this.env.AI as unknown as {
-          run: (model: string, input: Record<string, unknown>) => Promise<{ text?: string }>;
-        }).run(["@cf/openai/whisper", "large", "v3", "turbo"].join("-"), {
-          audio: wavBase64,
-          language: "ar",
-          initial_prompt: "محادثة هاتفية باللهجة المصرية مع ميزان لحجز موعد أو استفسار."
-        })) as { text?: string };
-        transcriptText = (res?.text || "").trim();
-      } catch {
-        const resFallback = (await (this.env.AI as unknown as {
-          run: (model: string, input: Record<string, unknown>) => Promise<{ text?: string }>;
-        }).run("@cf/openai/whisper", {
-          audio: Array.from(wavBytes)
-        })) as { text?: string };
-        transcriptText = (resFallback?.text || "").trim();
-      }
-      if (isMeaningfulTranscript(transcriptText, 0.9)) {
-        await this.handleFinalTranscript(
-          connection,
-          transcriptText,
-          detectTranscriptLanguage(transcriptText)
-        );
-      } else if (!this.sessionClosed) {
-        connection.send(JSON.stringify({ type: "status", status: "listening" }));
-      }
-    } catch (err) {
-      console.error("Workers AI Whisper STT failed:", err);
-      if (!this.sessionClosed) {
-        try {
-          connection.send(JSON.stringify({ type: "status", status: "listening" }));
-        } catch {}
-      }
-    } finally {
-      this.whisperTranscribing = false;
-    }
   }
 
   private async handleFinalTranscript(
@@ -754,7 +637,10 @@ export class MizanVoiceAgent extends Agent<Env> {
       missingSlotLabels: missingLabels
     });
 
-    reply = sanitizeForSpeech(actionGuarded.text, this.personTitleContext);
+    const bookingSafeText = this.cmSession.intent === "book_appointment"
+      ? guardUnconfirmedBookingClaim(actionGuarded.text, this.cmSession.actionResult?.bookingConfirmed === true)
+      : actionGuarded.text;
+    reply = sanitizeForSpeech(bookingSafeText, this.personTitleContext);
     if (!reply) reply = "ممكن توضح لي طلبك أكتر؟";
 
     this.conversation.push({ role: "user", content: transcript }, { role: "assistant", content: reply });
@@ -794,8 +680,17 @@ export class MizanVoiceAgent extends Agent<Env> {
     try {
       const audio = await this.synthesizeElevenLabsAudio(reply);
       if (this.sessionClosed) return;
+      // Estimate MP3 playback duration at 128 kbps (16,000 bytes/sec) + 350ms acoustic echo tail
+      const estimatedDurationMs = Math.max(600, Math.round((audio.byteLength / 16000) * 1000) + 350);
+      this.agentSpeakingUntil = Date.now() + estimatedDurationMs;
       connection.send(audio);
-      connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength }));
+      const timeToAudioMs = Date.now() - turnStart;
+      this.env.VOICE_METRICS?.writeDataPoint({
+        blobs: [this.tenantSlug, this.sessionId, "turn_to_audio"],
+        doubles: [timeToAudioMs],
+        indexes: [this.tenantSlug]
+      });
+      connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength, timeToAudioMs }));
     } catch (ttsError) {
       console.error("ElevenLabs TTS failed:", ttsError);
       if (!this.sessionClosed) {

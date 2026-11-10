@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /client
+Disallow: /dashboard
+Disallow: /login
+Disallow: /search
+Disallow: /c/
+Disallow: /agents/
+Disallow: /embed/
+Sitemap: https://mizanconsult.com/sitemap.xml

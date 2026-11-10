@@ -1219,3 +1219,13 @@ label.l {
   .ct { padding: 22px 18px 40px; }
   .g4 { grid-template-columns: 1fr; }
 }
+
+/* Sprint 5: prevent data tables breaking narrow phones; preserve accessible horizontal scroll. */
+@media (max-width: 600px) {
+  .ct { min-width: 0; padding: 16px 12px 28px; }
+  .card { min-width: 0; }
+  .tb { gap: 10px; }
+  .tb .btn { max-width: 100%; }
+  table { display: block; overflow-x: auto; width: 100%; -webkit-overflow-scrolling: touch; }
+  input, textarea, select { max-width: 100%; }
+}

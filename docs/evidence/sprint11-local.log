@@ -1,0 +1,63 @@
+
+> mizan-voice-gateway@2.0.0 test
+> node tests/staging-guard.test.mjs && node tests/telephony-lab.test.mjs && node tests/telephony-route.test.mjs && node tests/sip-seo.test.mjs && node tests/operational-metrics.test.mjs && node tests/crm-workflow.test.mjs && node tests/billing-usage.test.mjs && node tests/deepgram-migration.test.mjs && node tests/conversation-manager.test.mjs && node tests/security-product.test.mjs && node tests/acceptance.test.mjs && npm run assets:check
+
+PASS fail-closed Staging guard rejects placeholders, production bindings/routes and absent workers.dev isolation
+PASS vendor-neutral PCMU 8k/PCM16 16k telephony lab roundtrip, bounded input, tenant route, packet lifecycle
+PASS trusted PBX routing requires authenticated peer, E.164 destination, unique tenant mapping
+PASS public-only marketing sitemap, robots rules and homepage metadata
+PASS realistic UI reporting and sampled, PII-free latency percentiles
+PASS CRM status validation, tenant-isolated mutations, safe client rendering
+PASS read-only billing estimate input/month/tenant filters, zero payment side effects
+=== Running Mizan Voice Gateway Deepgram STT Migration Test Suite ===
+[PASS] 0. All 12 TypeScript modules transpiled successfully (full type-check requires dependency installation)
+[PASS] 1. Audio encoding (linear16 16kHz mono) & Deepgram URL parameters verified
+[PASS] 2. STT tests (Egyptian Arabic, English, Mixed Ar-En, Short, Long, Consecutive turns) verified
+[PASS] 3. Repetition, silence, background noise UtteranceEnd, and post-close lifecycle tests verified
+[PASS] 4. Integration preservation (ElevenLabs MX8opBj7bbi4G2cE9j2w, tenant config, conversation guard) verified
+[PASS] 5. Missing DEEPGRAM_API_KEY secret fail-safe guard verified
+[PASS] 6. STT binary send failure triggers reconnect, buffers/replays audio, and retains unsent frames
+=== ALL TESTS PASSED SUCCESSFULLY ===
+=== Running Mizan Conversation Manager Test Suite ===
+
+── 1. Output Guard, SpeechChunker & Action Claim Blocker ──
+  ✓ passes clean Egyptian Arabic unchanged
+  ✓ removes يا فندم and فندم even with Arabic harakat
+  ✓ replaces حضرتك / لحضرتك / مع حضرتك / سيادتك with gender-aware Egyptian pronouns
+  ✓ removes unverified vocative titles (يا دكتور / يا أستاذ) when caller has no title
+  ✓ detects MSA and non-Egyptian markers accurately
+  ✓ rejects procedural utterances from being captured as caller name (REG-03 / REG-04)
+  ✓ SpeechChunker splits at sentence boundaries without splitting decimals or emails
+  ✓ guardUnconfirmedActionClaim blocks premature booking confirmation when phone or action is unconfirmed
+
+── 2. Slot Validators & Cross-Turn Phone Accumulator ──
+  ✓ phone_eg: validates 010/011/012/015, +20 prefix, and Arabic-Indic digits
+  ✓ accumulatePhoneDigits: assembles chunked Egyptian mobile digits across 3 turns (REG-01/REG-02)
+  ✓ email, date_iso, time_hhmm, and text validators enforce strict formats
+
+── 3. State Machine, Confirmation Guards & Tool Executor ──
+  ✓ full guarded lifecycle: GREETING → DATA_COLLECTION → ACTION → CLOSING → ENDED
+  ✓ enforces manual state transition guards and CLOSING → DATA_COLLECTION intentFresh guard
+  ✓ carries over name/phone/email across intent changes while dropping non-carry-over slots
+  ✓ ingestCallerUtterance handles multi-turn voice conversation and emergency override (REG-06)
+
+── 4. Prompt Rendering & Tag-Spoofing Sanitization ──
+  ✓ strips < and > from untrusted caller/CRM/learning strings in prompt blocks
+
+── 5. D1 Schema, Migration-002 & Evaluator Verification ──
+  ✓ applies schema.sql + migrations 001/002/003 and executes all D1 queries cleanly
+  ✓ evaluator: scores dialect/respect violations and filters unsafe learnings
+
+────────────────────────────────────────────────────────────
+Conversation Manager Tests: 18 total, 18 passed, 0 failed
+=== ALL CONVERSATION MANAGER TESTS PASSED SUCCESSFULLY ===
+Security and honest-product regression checks passed (session TTL, tampering, claims, XSS sinks, tenant isolation, empty states).
+PASS inline JavaScript parses across 5 UI pages
+PASS admin cross-tenant SQL metrics are accurate with multiple call turns
+PASS public page hardening, realistic KPI labels and latency instrumentation
+PASS CSV RFC4180 quoting and formula-injection mitigation
+
+> mizan-voice-gateway@2.0.0 assets:check
+> node scripts/sync-ui-assets.mjs --check
+
+Embedded UI assets match public/.

@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const homepage=readFileSync('public/index.html','utf8');
+for(const field of ['canonical','og:title','og:url','name="description"']) assert.ok(homepage.includes(field));
+const robots=readFileSync('public/robots.txt','utf8');
+assert.match(robots,/Disallow: \/api\//);
+assert.match(robots,/Disallow: \/c\//);
+const sitemap=readFileSync('public/sitemap.xml','utf8');
+assert.ok(!sitemap.includes('/client')&&!sitemap.includes('/dashboard'));
+assert.match(sitemap,/https:\/\/mizanconsult\.com\//);
+console.log('PASS public-only marketing sitemap, robots rules and homepage metadata');

@@ -16,6 +16,11 @@ import { resolveTenant, resolveTenantByDomain, getTenantKnowledge, invalidateTen
 import { getSessionUser, createSessionResponse, clearSessionCookie, canAccessTenant, hashPassword, verifyPassword } from "./lib/auth";
 import { encryptPII, decryptPII, redactPII } from "./lib/crypto";
 import { EMBEDDED_UI_ASSETS } from "./lib/ui-assets";
+import { parseSearchInput, searchClientData, searchAdminData } from "./lib/search";
+import { loginRateKey, loginThrottleCheck, recordFailedLogin } from "./lib/login-throttle";
+import { summarizeLatency } from "./lib/operational-metrics";
+import { isRequestStatus, listTenantRequests, updateTenantRequestStatus } from "./lib/crm";
+import { getTenantMonthlyUsage, getUtcMonthBounds } from "./lib/billing";
 
 // Re-export the Agent class so Wrangler can find it
 export { MizanVoiceAgent };
@@ -50,6 +55,14 @@ interface BackgroundMessage {
 }
 
 const PCM_PROCESSOR_WORKLET_JS = "// PCM Processor — AudioWorkletNode\n// Converts Float32 audio (16,000 Hz mono) to 16-bit signed little-endian PCM (linear16)\n// and batches 2048 samples (4096 bytes / 128ms) per frame to minimize WebSocket event overhead.\n// Loaded via: audioCtx.audioWorklet.addModule('/pcm-processor.js')\n\nconst CHUNK_SAMPLES = 2048;\n\nclass PCMProcessor extends AudioWorkletProcessor {\n  constructor() {\n    super();\n    this._buffer = new Int16Array(CHUNK_SAMPLES);\n    this._offset = 0;\n    this.port.onmessage = (event) => {\n      if (event.data && event.data.type === 'flush') {\n        this._flushPartial();\n      }\n    };\n  }\n\n  _flushPartial() {\n    if (this._offset > 0) {\n      const slice = this._buffer.slice(0, this._offset);\n      this.port.postMessage(slice.buffer, [slice.buffer]);\n      this._offset = 0;\n    }\n  }\n\n  process(inputs) {\n    const input = inputs[0];\n    if (input && input[0]) {\n      const float32 = input[0];\n      for (let i = 0; i < float32.length; i++) {\n        const raw = float32[i];\n        const s = Number.isFinite(raw) ? Math.max(-1, Math.min(1, raw)) : 0;\n        this._buffer[this._offset++] = s < 0 ? s * 0x8000 : s * 0x7FFF;\n        if (this._offset >= CHUNK_SAMPLES) {\n          const out = this._buffer.slice(0, CHUNK_SAMPLES);\n          this.port.postMessage(out.buffer, [out.buffer]);\n          this._offset = 0;\n        }\n      }\n    }\n    return true;\n  }\n}\n\nregisterProcessor('pcm-processor', PCMProcessor);\n";
+
+const securityHeaders = {
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "X-Frame-Options": "DENY",
+  "Permissions-Policy": "microphone=(self), camera=()",
+  "Content-Security-Policy": "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'"
+};
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "https://mizanconsult.com",
@@ -113,7 +126,8 @@ export default {
         status: 200,
         headers: {
           "Content-Type": embeddedAsset.contentType,
-          "Cache-Control": "no-cache, must-revalidate"
+          "Cache-Control": ["/client", "/client.html", "/dashboard", "/dashboard.html", "/login", "/login.html", "/search", "/search.html"].includes(normalizedPath) ? "no-store" : "no-cache, must-revalidate",
+          ...securityHeaders
         }
       });
     }
@@ -170,12 +184,29 @@ async function handleVoiceWebSocket(
   }
 
   const slug = match[1];
-  const sessionId = url.searchParams.get("session_id") ?? crypto.randomUUID();
+  const requestedSessionId = url.searchParams.get("session_id");
+  if (requestedSessionId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(requestedSessionId)) {
+    return new Response("Invalid voice session identifier", { status: 400, headers: securityHeaders });
+  }
+  const sessionId = requestedSessionId ?? crypto.randomUUID();
 
   // Validate tenant exists and is active before routing
   const tenant = await resolveTenant(slug, env);
   if (!tenant) {
     return new Response("Tenant not found or suspended", { status: 404 });
+  }
+
+  // Browser-origin check limits cross-site drive-by sessions. Non-browser clients
+  // can omit Origin, so full abuse protection still requires a signed call token.
+  const callerOrigin = request.headers.get("Origin");
+  if (callerOrigin) {
+    const trustedOrigins = new Set([url.origin, "https://mizanconsult.com", "https://www.mizanconsult.com"]);
+    if (tenant.domain) {
+      try { trustedOrigins.add(new URL(`https://${tenant.domain}`).origin); } catch { /* Invalid tenant domain is never trusted. */ }
+    }
+    if (!trustedOrigins.has(callerOrigin)) {
+      return new Response("Untrusted voice request origin", { status: 403, headers: securityHeaders });
+    }
   }
 
   // Enforce per-tenant concurrent session limit
@@ -219,6 +250,13 @@ async function handleApi(
   const path = url.pathname;
 
   try {
+    // Cookie-authenticated state changes must originate from this exact origin (CSRF defense).
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) {
+      const origin = request.headers.get("Origin");
+      if (origin !== url.origin) return json({ error: "Invalid request origin" }, 403);
+      const size = Number(request.headers.get("Content-Length") || 0);
+      if (size > 64 * 1024) return json({ error: "Request body too large" }, 413);
+    }
     // Portal auth
     if (path === "/api/client/auth/login" && request.method === "POST")
       return await portalLogin(request, env);
@@ -237,6 +275,7 @@ async function handleApi(
 
     return json({ error: "Not found" }, 404);
   } catch (err) {
+    if (err instanceof SyntaxError) return json({ error: "Malformed JSON" }, 400);
     console.error("API error:", err);
     return json({ error: "Internal server error" }, 500);
   }
@@ -247,7 +286,23 @@ async function handleApi(
 // ---------------------------------------------------------------------------
 
 async function portalLogin(request: Request, env: Env): Promise<Response> {
-  const { email, password } = await request.json<{ email: string; password: string }>();
+  const input = await request.json<{ email?: unknown; password?: unknown }>();
+  if (!input || typeof input.email !== "string" || typeof input.password !== "string" ||
+      input.email.length > 254 || !input.email.trim() ||
+      input.password.length < 1 || input.password.length > 1024) {
+    return json({ error: "Invalid login input" }, 400);
+  }
+  const email = input.email.trim().toLowerCase();
+  const password = input.password;
+  const now = Math.floor(Date.now() / 1000);
+  const rateKeys = [
+    { key: await loginRateKey("account", email), limit: 8 },
+    { key: await loginRateKey("ip", request.headers.get("CF-Connecting-IP") || "unknown"), limit: 30 }
+  ];
+  const retryAfter = await loginThrottleCheck(env, rateKeys, now);
+  if (retryAfter > 0) {
+    return json({ error: "محاولات كثيرة. حاول لاحقاً." }, 429, { "Retry-After": String(retryAfter) });
+  }
 
   const user = await env.DB.prepare(
     `SELECT id, tenant_slug, email, password_hash, role FROM portal_users WHERE email = ?`
@@ -256,8 +311,10 @@ async function portalLogin(request: Request, env: Env): Promise<Response> {
     .first<{ id: string; tenant_slug: string; email: string; password_hash: string; role: string }>();
 
   if (!user || !(await verifyPassword(password, user.password_hash))) {
+    await recordFailedLogin(env, rateKeys, now);
     return json({ error: "بيانات الدخول غير صحيحة" }, 401);
   }
+  await env.DB.prepare(`DELETE FROM auth_login_attempts WHERE attempt_key = ?`).bind(rateKeys[0].key).run();
 
   const sessionUser = {
     id: user.id,
@@ -291,6 +348,39 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   const slug = user.tenantSlug;
   const path = url.pathname;
 
+  // Search is scoped exclusively to the tenant from the signed session.
+  if (path === "/api/client/search" && request.method === "GET") {
+    const params = parseSearchInput(url, ["all", "knowledge", "calls"]);
+    if ("error" in params) return json({ error: params.error }, params.status);
+    return json({ results: await searchClientData(env.DB, slug, params.q, params.scope), mode: "text" });
+  }
+
+  // Read-only usage reporting. No invoicing, charging, or payment side effects.
+  if (path === "/api/client/billing/usage" && request.method === "GET") {
+    const month = url.searchParams.get("month") || new Date().toISOString().slice(0,7);
+    if (!getUtcMonthBounds(month)) return json({ error: "Invalid billing month" }, 400);
+    const [usage, tenant] = await Promise.all([
+      getTenantMonthlyUsage(env.DB, slug, month),
+      env.DB.prepare(`SELECT plan_tier FROM tenants WHERE slug = ?`).bind(slug).first<{ plan_tier: string }>()
+    ]);
+    return json({usage, planTier: tenant?.plan_tier ?? null, note: "استهلاك تقريبي — ليست فاتورة أو مطالبة دفع"});
+  }
+
+  // CRM follow-up: only records created by this signed-in tenant's voice workflow.
+  if (path === "/api/client/requests" && request.method === "GET") {
+    const filter = url.searchParams.get("status");
+    if (filter && !isRequestStatus(filter)) return json({ error: "Invalid request status" }, 400);
+    return json({ requests: await listTenantRequests(env.DB, slug, filter || undefined) });
+  }
+
+  const requestStatusMatch = path.match(/^\/api\/client\/requests\/([a-zA-Z0-9_-]{1,96})\/status$/);
+  if (requestStatusMatch && request.method === "PATCH") {
+    const body = await request.json<{ status?: unknown }>();
+    if (!body || !isRequestStatus(body.status)) return json({ error: "Invalid request status" }, 400);
+    const found = await updateTenantRequestStatus(env.DB, slug, requestStatusMatch[1], body.status);
+    return found ? json({ ok: true }) : json({ error: "Request not found" }, 404);
+  }
+
   // GET /api/client/sessions — list call sessions
   if (path === "/api/client/sessions" && request.method === "GET") {
     const rows = await env.DB.prepare(
@@ -318,11 +408,14 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
 
     const turns = await env.DB.prepare(
       `SELECT turn_index, speaker, transcript_redacted, latency_ms, created_at
-       FROM call_turns WHERE session_id = ? ORDER BY turn_index ASC`
-    ).bind(sessionId).all();
+       FROM call_turns WHERE session_id = ? AND tenant_slug = ? ORDER BY turn_index ASC`
+    ).bind(sessionId, slug).all();
 
     return json({
-      session: { ...session, caller_name: callerName, caller_phone: callerPhone },
+      session: { id: session.id, call_status: session.call_status,
+        selected_doctor: session.selected_doctor, selected_slot: session.selected_slot,
+        booking_confirmed: session.booking_confirmed, started_at: session.started_at,
+        ended_at: session.ended_at, caller_name: callerName, caller_phone: callerPhone },
       turns: turns.results,
     });
   }
@@ -338,6 +431,10 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   // POST /api/client/knowledge
   if (path === "/api/client/knowledge" && request.method === "POST") {
     const { faq_text, category } = await request.json<{ faq_text: string; category: string }>();
+    if (typeof faq_text !== "string" || !faq_text.trim() || faq_text.length > 10000 ||
+        (category !== undefined && (typeof category !== "string" || category.length > 50))) {
+      return json({ error: "Invalid knowledge entry" }, 400);
+    }
     const id = crypto.randomUUID();
     await env.DB.prepare(
       `INSERT INTO tenant_knowledge (id, tenant_slug, category, faq_text, updated_at)
@@ -351,10 +448,15 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   const knowledgeMatch = path.match(/^\/api\/client\/knowledge\/([\w-]+)$/);
   if (knowledgeMatch && request.method === "PUT") {
     const { faq_text, category } = await request.json<{ faq_text: string; category: string }>();
-    await env.DB.prepare(
+    if (typeof faq_text !== "string" || !faq_text.trim() || faq_text.length > 10000 ||
+        typeof category !== "string" || category.length > 50) {
+      return json({ error: "Invalid knowledge entry" }, 400);
+    }
+    const change = await env.DB.prepare(
       `UPDATE tenant_knowledge SET faq_text = ?, category = ?, updated_at = unixepoch()
        WHERE id = ? AND tenant_slug = ?`
     ).bind(faq_text, category, knowledgeMatch[1], slug).run();
+    if (change.meta.changes < 1) return json({ error: "Knowledge entry not found" }, 404);
     await invalidateTenantCache(slug, null, env);
     return json({ ok: true });
   }
@@ -395,13 +497,18 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   // PUT /api/client/customization — tenant can ONLY edit customization + escalation
   if (path === "/api/client/customization" && request.method === "PUT") {
     const body = await request.json<{ tenant_customization?: string; escalation_phone?: string }>();
-    await env.DB.prepare(
+    if ((body.tenant_customization !== undefined && (typeof body.tenant_customization !== "string" || body.tenant_customization.length > 8000)) ||
+        (body.escalation_phone !== undefined && (typeof body.escalation_phone !== "string" || body.escalation_phone.length > 40))) {
+      return json({ error: "Invalid customization" }, 400);
+    }
+    const change = await env.DB.prepare(
       `UPDATE tenant_voice_config
        SET tenant_customization = COALESCE(?, tenant_customization),
            escalation_phone = COALESCE(?, escalation_phone),
            updated_at = unixepoch()
        WHERE tenant_slug = ?`
     ).bind(body.tenant_customization ?? null, body.escalation_phone ?? null, slug).run();
+    if (change.meta.changes < 1) return json({ error: "Tenant voice configuration not found" }, 404);
     await invalidateTenantCache(slug, null, env);
     return json({ ok: true });
   }
@@ -414,11 +521,18 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
     const avgLatency = await env.DB.prepare(
       `SELECT AVG(latency_ms) as avg FROM call_turns WHERE tenant_slug = ? AND latency_ms IS NOT NULL`
     ).bind(slug).first<{ avg: number | null }>();
+    const recentTurnLatencies = await env.DB.prepare(
+      `SELECT latency_ms FROM call_turns WHERE tenant_slug = ? AND latency_ms IS NOT NULL
+       ORDER BY created_at DESC LIMIT 500`
+    ).bind(slug).all<{ latency_ms: number }>();
+    const p95 = summarizeLatency(recentTurnLatencies.results.map(row => row.latency_ms));
     return json({
-      status: "نشط ويعمل بشكل طبيعي",
+      status: "لوحة التحكم متاحة — خدمات الصوت لم تُختبر الآن",
       knowledge_count: knowledgeCount?.count ?? 0,
-      avg_latency: avgLatency?.avg ? Math.round(avgLatency.avg) : null,
-      uptime: "99.9%",
+      avg_latency: avgLatency?.avg != null ? Math.round(avgLatency.avg) : null,
+      recent_p95_latency_ms: p95.p95,
+      recent_latency_sample_count: p95.samples,
+      uptime: null,
     });
   }
 
@@ -466,6 +580,12 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
 
   const path = url.pathname;
 
+  if (path === "/api/admin/search" && request.method === "GET") {
+    const params = parseSearchInput(url, ["all"]);
+    if ("error" in params) return json({ error: params.error }, params.status);
+    return json({ results: await searchAdminData(env.DB, params.q), mode: "text" });
+  }
+
   // GET /api/admin/tenants
   if (path === "/api/admin/tenants" && request.method === "GET") {
     const rows = await env.DB.prepare(
@@ -483,20 +603,24 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
       system_prompt: string; voice_id?: string;
     }>();
 
+    if (!body || typeof body.slug !== "string" || !/^[a-z0-9][a-z0-9-]{1,62}$/u.test(body.slug) ||
+        typeof body.name !== "string" || body.name.trim().length < 2 || body.name.length > 120 ||
+        typeof body.system_prompt !== "string" || body.system_prompt.length > 8000 ||
+        (body.industry !== undefined && (typeof body.industry !== "string" || body.industry.length > 64))) {
+      return json({ error: "Invalid tenant input" }, 400);
+    }
     const tenantId = `c_${body.slug}`;
-    await env.DB.prepare(
-      `INSERT INTO tenants (id, slug, name, industry, domain, plan_tier, max_concurrent_sessions, theme_color, logo_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      tenantId, body.slug, body.name, body.industry ?? "general", body.domain ?? null,
-      body.plan_tier ?? "pilot_14d", body.max_concurrent_sessions ?? 1,
-      body.theme_color ?? "#1BA6B8", body.logo_url ?? null
-    ).run();
-
-    await env.DB.prepare(
-      `INSERT INTO tenant_voice_config (tenant_slug, system_prompt, voice_id)
-       VALUES (?, ?, ?)`
-    ).bind(body.slug, body.system_prompt, body.voice_id ?? "MX8opBj7bbi4G2cE9j2w").run();
+    // D1 batch is transactional: avoid an orphan tenant if voice config insertion fails.
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO tenants (id, slug, name, industry, domain, plan_tier, max_concurrent_sessions, theme_color, logo_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        tenantId, body.slug, body.name, body.industry ?? "general", body.domain ?? null,
+        body.plan_tier ?? "pilot_14d", body.max_concurrent_sessions ?? 1,
+        body.theme_color ?? "#1BA6B8", body.logo_url ?? null
+      ),
+      env.DB.prepare(`INSERT INTO tenant_voice_config (tenant_slug, system_prompt, voice_id)
+        VALUES (?, ?, ?)`).bind(body.slug, body.system_prompt, body.voice_id ?? "MX8opBj7bbi4G2cE9j2w")
+    ]);
 
     return json({ ok: true, tenantId }, 201);
   }
@@ -513,13 +637,10 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
     ).bind(slug).first();
 
     const stats = await env.DB.prepare(
-      `SELECT COUNT(*) as calls,
-              SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) as bookings,
-              AVG(ct.latency_ms) as avg_latency
-       FROM call_sessions cs
-       LEFT JOIN call_turns ct ON ct.tenant_slug = cs.tenant_slug
-       WHERE cs.tenant_slug = ?`
-    ).bind(slug).first();
+      `SELECT (SELECT COUNT(*) FROM call_sessions WHERE tenant_slug = ?) AS calls,
+              (SELECT COUNT(*) FROM call_sessions WHERE tenant_slug = ? AND booking_confirmed = 1) AS bookings,
+              (SELECT AVG(latency_ms) FROM call_turns WHERE tenant_slug = ? AND latency_ms IS NOT NULL) AS avg_latency`
+    ).bind(slug, slug, slug).first();
 
     return json({ tenant, voiceConfig, stats });
   }
@@ -554,14 +675,18 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
   if (path === "/api/admin/metrics" && request.method === "GET") {
     const metrics = await env.DB.prepare(
       `SELECT t.slug, t.name, t.status, t.plan_tier,
-              COUNT(cs.id) as total_calls,
-              SUM(CASE WHEN cs.call_status = 'completed' THEN 1 ELSE 0 END) as completed,
-              SUM(CASE WHEN cs.booking_confirmed = 1 THEN 1 ELSE 0 END) as bookings,
-              AVG(ct.latency_ms) as avg_latency
+              COALESCE(s.total_calls, 0) AS total_calls,
+              COALESCE(s.completed, 0) AS completed,
+              COALESCE(s.bookings, 0) AS bookings,
+              l.avg_latency AS avg_latency
        FROM tenants t
-       LEFT JOIN call_sessions cs ON cs.tenant_slug = t.slug
-       LEFT JOIN call_turns ct ON ct.tenant_slug = t.slug
-       GROUP BY t.slug ORDER BY total_calls DESC`
+       LEFT JOIN (SELECT tenant_slug, COUNT(*) AS total_calls,
+          SUM(CASE WHEN call_status = 'completed' THEN 1 ELSE 0 END) AS completed,
+          SUM(CASE WHEN booking_confirmed = 1 THEN 1 ELSE 0 END) AS bookings
+          FROM call_sessions GROUP BY tenant_slug) s ON s.tenant_slug = t.slug
+       LEFT JOIN (SELECT tenant_slug, AVG(latency_ms) AS avg_latency
+          FROM call_turns WHERE latency_ms IS NOT NULL GROUP BY tenant_slug) l ON l.tenant_slug = t.slug
+       ORDER BY total_calls DESC`
     ).all();
     return json({ metrics: metrics.results });
   }
@@ -591,11 +716,11 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
       `SELECT AVG(latency_ms) as avg FROM call_turns WHERE latency_ms IS NOT NULL`
     ).first<{ avg: number | null }>();
     return json({
-      status: "نشط ويعمل بشكل طبيعي",
+      status: "لوحة التحكم متاحة — خدمات الصوت لم تُختبر الآن",
       active_tenants: tenantCount?.count ?? 0,
       knowledge_count: knowledgeCount?.count ?? 0,
-      avg_latency: avgLatency?.avg ? Math.round(avgLatency.avg) : 340,
-      uptime: "99.9%",
+      avg_latency: avgLatency?.avg != null ? Math.round(avgLatency.avg) : null,
+      uptime: null,
     });
   }
 
@@ -714,7 +839,7 @@ async function handleEmbedWidget(request: Request, env: Env, slug: string): Prom
     return new Response("// Tenant not found", { status: 404, headers: { "Content-Type": "application/javascript" } });
   }
 
-  const accent = tenant.theme_color || "#1BA6B8";
+  const accent = safeAccent(tenant.theme_color);
   const callUrl = `https://mizanconsult.com/c/${slug}`;
 
   const js = `(function(){var d=document,s=d.createElement('style'),b=d.createElement('a');
@@ -728,6 +853,7 @@ d.body.appendChild(b);})();`;
       "Content-Type": "application/javascript; charset=utf-8",
       "Cache-Control": "public, max-age=300",
       "Access-Control-Allow-Origin": "*",
+      ...securityHeaders
     },
   });
 }
@@ -737,6 +863,17 @@ d.body.appendChild(b);})();`;
 // ---------------------------------------------------------------------------
 
 const DEFAULT_THEME = { accent: "#1BA6B8", accent2: "#2BB8C7", glow: "rgba(27, 166, 184, 0.34)" };
+function safeAccent(value: string | null | undefined): string {
+  return value && /^#[0-9a-fA-F]{6}$/u.test(value) ? value : DEFAULT_THEME.accent;
+}
+function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/gu, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]!));
+}
+function safeLogoUrl(raw: string | null | undefined, base: string): string | null {
+  if (!raw) return null;
+  try { const u = new URL(raw, base); return u.protocol === "https:" ? u.toString() : null; }
+  catch { return null; }
+}
 
 async function handlePublicVoicePage(request: Request, env: Env, slug: string): Promise<Response> {
   const tenant = await resolveTenant(slug, env);
@@ -746,15 +883,17 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
 
   const wsBase = env.VOICE_WS_BASE || "wss://voice.mizanconsult.com";
   const sessionId = crypto.randomUUID();
-  const accent = tenant.theme_color || DEFAULT_THEME.accent;
+  const accent = safeAccent(tenant.theme_color);
+  const safeName = escapeHtml(tenant.name);
   const theme = {
     accent,
     accent2: shadeColor(accent, 40),
     glow: hexToRgba(accent, 0.3),
   };
-  const logoUrl = tenant.logo_url ? new URL(tenant.logo_url, request.url).toString() : null;
+  const logoUrl = safeLogoUrl(tenant.logo_url, request.url);
+  const safeLogo = logoUrl ? escapeHtml(logoUrl) : null;
   const avatarContent = logoUrl
-    ? `<img src="${logoUrl}" alt="${tenant.name}">`
+    ? `<img src="${safeLogo}" alt="${safeName}">`
     : `<svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0zM8 21h8"></path></svg>`;
 
   const html = `<!DOCTYPE html>
@@ -763,17 +902,17 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#0B2D4B">
-  <title>${tenant.name} — المساعد الصوتي المباشر</title>
-  <meta property="og:title" content="${tenant.name} — مساعد صوتي">
-  <meta property="og:description" content="تحدث الآن مع المساعد الصوتي لـ ${tenant.name}. احجز موعدك أو استفسر عن خدماتنا فوراً.">
+  <title>${safeName} — المساعد الصوتي المباشر</title>
+  <meta property="og:title" content="${safeName} — مساعد صوتي">
+  <meta property="og:description" content="تحدث الآن مع المساعد الصوتي لـ ${safeName}. احجز موعدك أو استفسر عن خدماتنا فوراً.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://mizanconsult.com/c/${tenant.slug}">
   <meta property="og:locale" content="ar_EG">
   <meta property="og:site_name" content="Mizan HQ">
-  ${logoUrl ? `<meta property="og:image" content="${logoUrl}">` : ''}
+  ${logoUrl ? `<meta property="og:image" content="${safeLogo}">` : ''}
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="${tenant.name} — مساعد صوتي">
-  <meta name="twitter:description" content="تحدث الآن مع المساعد الصوتي لـ ${tenant.name}.">
+  <meta name="twitter:title" content="${safeName} — مساعد صوتي">
+  <meta name="twitter:description" content="تحدث الآن مع المساعد الصوتي لـ ${safeName}.">
   <link rel="stylesheet" href="/css/voice.css">
   <style>
     :root {
@@ -793,7 +932,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
       <button type="button" class="mz-tour-trigger-btn" onclick="MizanOnboarding.start('call')">🎯 جولة تعريفية</button>
     </div>
     <div class="av">${avatarContent}</div>
-    <h1>${tenant.name}</h1>
+    <h1>${safeName}</h1>
     <p class="tag">المساعد جاهز يرد على حضرتك</p>
     <span class="st" id="status">متصل وجاهز</span>
     <div class="wave idle" id="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
@@ -818,8 +957,8 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   </div>
   <script src="/js/onboarding.js"></script>
   <script>
-    const TENANT_SLUG="${tenant.slug}",SESSION_ID="${sessionId}",WS_BASE="${wsBase}";
-    let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,timerInt=null,startT=null,callAttempt=0,playbackTime=0,playbackEpoch=0;const playbackSources=new Set();
+    const TENANT_SLUG=${JSON.stringify(tenant.slug)},SESSION_ID=${JSON.stringify(sessionId)},WS_BASE=${JSON.stringify(wsBase)};
+    let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,timerInt=null,startT=null,callAttempt=0,playbackTime=0;
     async function toggleCall(){calling?endCall():startCall()}
     async function startCall(){
       const attempt=++callAttempt;
@@ -830,9 +969,6 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         const acquiredStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:16000,channelCount:1}});
         if(attempt!==callAttempt){acquiredStream.getTracks().forEach(t=>t.stop());return}
         stream=acquiredStream;
-        const micSettings=stream.getAudioTracks()[0]?.getSettings?.()||{};
-        console.info('Microphone AEC settings:',{echoCancellation:micSettings.echoCancellation,noiseSuppression:micSettings.noiseSuppression,autoGainControl:micSettings.autoGainControl,sampleRate:micSettings.sampleRate});
-        if(micSettings.echoCancellation===false)console.warn('Browser did not enable acoustic echo cancellation; full-duplex playback may leak into STT.');
         const AudioContextClass=window.AudioContext||window.webkitAudioContext;
         if(!AudioContextClass)throw new Error('المتصفح لا يدعم Web Audio API');
         audioCtx=new AudioContextClass({sampleRate:16000});
@@ -845,8 +981,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         audioSource.connect(audioNode);
         audioNode.port.onmessage=e=>{
           if(attempt!==callAttempt||!calling||!ws||ws.readyState!==WebSocket.OPEN||muted)return;
-          // Full duplex: keep microphone frames flowing during agent playback.
-          // Browser AEC (echoCancellation) must suppress speaker leakage before STT.
+          if(audioCtx&&audioCtx.currentTime<playbackTime+0.25)return;
           ws.send(e.data);
         };
         s.textContent='جاري الاتصال بالمساعد...';
@@ -863,12 +998,20 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
           if(e.data instanceof ArrayBuffer){play(e.data);return}
           try{
             const m=JSON.parse(e.data);
-            if(m.type==='control'&&m.command==='barge_in'){stopPlayback();s.textContent='سمعتك — كمل كلامك';s.className='st';}
             if(m.type==='transcript')addTurn(m.speaker,m.text);
             if(m.type==='error'){
               console.error('Voice agent error:',m.message);
               s.textContent=m.message||'حدث خطأ في المساعد الصوتي';
               s.className='st error';
+            }
+            if(m.type==='status'&&m.status==='stt_reconnecting'){
+              s.textContent='نعيد الاتصال بخدمة التعرف الصوتي...';s.className='st connecting';
+            }
+            if(m.type==='status'&&m.status==='stt_unavailable'){
+              s.textContent='خدمة التعرف الصوتي غير متاحة حالياً. أنهِ الاتصال وحاول مجدداً.';s.className='st error';
+            }
+            if(m.type==='status'&&m.status==='stt_connected'){
+              s.textContent='متصل — تحدث الآن';s.className='st';
             }
             if(m.type==='status'&&m.status==='listening'){
               s.textContent='متصل — تحدث الآن';
@@ -880,38 +1023,28 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
           }catch(err){console.warn('Unrecognized voice message:',err)}
         };
         socket.onclose=()=>{if(attempt===callAttempt)endCall()};
-        socket.onerror=()=>{if(attempt===callAttempt){s.textContent='خطأ في الاتصال';s.className='st error';endCall()}};
+        socket.onerror=()=>{if(attempt===callAttempt)endCall('تعذر الاتصال بالخادم الصوتي. حاول مرة ثانية.')};
       }catch(err){
         console.error('Call initialization failed:',err);
         if(attempt===callAttempt){endCall();s.textContent=err.name==='NotAllowedError'?'لم يتم السماح باستخدام الميكروفون':err.message||'تعذر تهيئة الصوت';s.className='st error'}
       }
     }
-    function endCall(){stopPlayback();callAttempt++;calling=false;const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
-      b.classList.remove('active','connecting');ow.classList.remove('active','connecting');s.textContent='انتهت المكالمة — جاهز لاتصال جديد';s.className='st';c.classList.remove('visible');w.classList.add('idle');
+    function endCall(errorText){callAttempt++;calling=false;const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
+      b.classList.remove('active','connecting');ow.classList.remove('active','connecting');s.textContent=errorText||'انتهت المكالمة — جاهز لاتصال جديد';s.className=errorText?'st error':'st';c.classList.remove('visible');w.classList.add('idle');playbackTime=0;muted=false;document.getElementById('muteBtn').classList.remove('muted');document.getElementById('muteLabel').textContent='كتم';
       if(timerInt){clearInterval(timerInt);timerInt=null}if(ws){const oldWs=ws;ws=null;if(oldWs.readyState===WebSocket.CONNECTING||oldWs.readyState===WebSocket.OPEN)oldWs.close()}if(audioNode){audioNode.disconnect();audioNode=null}if(audioSource){audioSource.disconnect();audioSource=null}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}if(audioCtx){const oldCtx=audioCtx;audioCtx=null;oldCtx.close().catch(()=>{})}}
     function toggleMute(){muted=!muted;const b=document.getElementById('muteBtn'),l=document.getElementById('muteLabel');muted?(b.classList.add('muted'),l.textContent='مكتوم'):(b.classList.remove('muted'),l.textContent='كتم')}
     function addTurn(sp,txt){const t=document.getElementById('transcript'),d=document.createElement('div');d.className='turn '+sp;
       const l=document.createElement('div');l.className='turn-label';l.textContent=sp==='caller'?'المتصل':'المساعد';
       const c=document.createElement('div');c.textContent=txt;d.appendChild(l);d.appendChild(c);t.appendChild(d);t.scrollTop=t.scrollHeight}
-    function stopPlayback(){
-      playbackEpoch++;
-      for(const source of playbackSources){try{source.stop()}catch(err){}}
-      playbackSources.clear();
-      playbackTime=audioCtx?audioCtx.currentTime:0;
-    }
     async function play(blob){
       if(!audioCtx)return;
-      const epoch=playbackEpoch;
       try{
         if(audioCtx.state==='suspended')await audioCtx.resume();
         const buf=await audioCtx.decodeAudioData(blob.slice(0));
-        if(epoch!==playbackEpoch||!calling)return;
         const source=audioCtx.createBufferSource();
         source.buffer=buf;
         source.connect(audioCtx.destination);
         const startAt=Math.max(audioCtx.currentTime,playbackTime);
-        playbackSources.add(source);
-        source.onended=()=>playbackSources.delete(source);
         source.start(startAt);
         playbackTime=startAt+buf.duration;
         const s=document.getElementById('status');
@@ -927,7 +1060,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   </script>
 </body></html>`;
 
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...securityHeaders } });
 }
 
 // ---------------------------------------------------------------------------
@@ -936,7 +1069,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
 
 function json(data: unknown, status = 200, extra: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
-    status, headers: { "Content-Type": "application/json", ...corsHeaders, ...extra },
+    status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...securityHeaders, ...corsHeaders, ...extra },
   });
 }
 

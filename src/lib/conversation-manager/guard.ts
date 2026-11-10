@@ -381,6 +381,15 @@ export function guardUnconfirmedActionClaim(
   };
 }
 
+/** Prevent false definitive booking claims when the request is only locally recorded. */
+export function guardUnconfirmedBookingClaim(speech: string, bookingConfirmed: boolean): string {
+  if (bookingConfirmed) return speech;
+  if (/(?:اتحجز(?:لك|ت)?|الحجز\s+اتأكد|موعدك\s+اتأكد|أكدت\s+الحجز|تم\s+(?:تأكيد|حجز)\s*(?:ال?موعد|الحجز)?)/u.test(speech)) {
+    return "طلب الموعد اتسجل، ولسه محتاج تأكيد من المنشأة.";
+  }
+  return speech;
+}
+
 /**
  * Buffers streamed LLM deltas and releases them at natural prosodic boundaries so TTS
  * receives complete phrases while multi-word banned expressions never split across chunks.

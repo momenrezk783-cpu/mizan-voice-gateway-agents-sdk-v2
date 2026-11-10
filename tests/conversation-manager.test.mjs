@@ -12,7 +12,7 @@ import { webcrypto } from "node:crypto"; if (!globalThis.crypto) globalThis.cryp
 //      carry-over, perform_action constraints & idempotency, transfer_to_human, end_call.
 //   4. Prompt & live-state rendering: tag-spoofing protection, <call_context>,
 //      <learned_adaptations>, and <live_state>.
-//   5. D1 database & migration-002 verification against real SQLite engine:
+//   5. D1 database & migration-002/003 verification against real SQLite engine:
 //      learnings upsert, crm_contacts lookup/upsert, call_sessions AES-GCM
 //      booking persistence, call_turns transcript loading, and evaluator safety.
 // ============================================================================
@@ -25,8 +25,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const babel = require("@babel/core");
-const presetTypescript = require("@babel/preset-typescript");
+const ts = require("typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -48,12 +47,8 @@ function transpileTsFile(absPath) {
     }
   );
 
-  const result = babel.transformSync(rewritten, {
-    filename: absPath,
-    presets: [presetTypescript],
-    sourceType: "module"
-  });
-  return result.code;
+  const result = ts.transpileModule(rewritten, {fileName:absPath, compilerOptions:{target:ts.ScriptTarget.ES2022, module:ts.ModuleKind.ESNext}});
+  return result.outputText;
 }
 
 function getModuleDataUrl(absPath) {
@@ -75,6 +70,7 @@ const promptMod = await importTs("src/lib/conversation-manager/prompt.ts");
 const dbMod = await importTs("src/lib/conversation-manager/db.ts");
 const evaluatorMod = await importTs("src/lib/conversation-manager/evaluator.ts");
 const cryptoMod = await importTs("src/lib/crypto.ts");
+const searchMod = await importTs("src/lib/search.ts");
 
 const {
   stripMarks,
@@ -85,6 +81,7 @@ const {
   sanitizeForSpeech,
   sanitizeForSpeechWithViolations,
   guardUnconfirmedActionClaim,
+  guardUnconfirmedBookingClaim,
   SpeechChunker
 } = guardMod;
 
@@ -469,7 +466,7 @@ console.log("\n── 5. D1 Schema, Migration-002 & Evaluator Verification ─�
 
 /**
  * Lightweight D1Database adapter backed by Python's built-in `sqlite3` CLI module
- * so we can test the exact SQL files (`schema.sql`, `migration-001.sql`, `migration-002.sql`)
+ * so we can test the exact SQL files (`schema.sql`, `migration-001.sql`, `migration-002.sql`, `migration-003.sql`)
  * and every parameterized D1 query in `db.ts`.
  */
 class SqliteD1Mock {
@@ -556,7 +553,7 @@ conn.close()`,
   }
 }
 
-await test("applies schema.sql + migration-001.sql + migration-002.sql and executes all D1 queries cleanly", async () => {
+await test("applies schema.sql + migrations 001/002/003 and executes all D1 queries cleanly", async () => {
   const tmpDbPath = `/tmp/mizan_test_${Date.now()}.sqlite`;
   const d1 = new SqliteD1Mock(tmpDbPath);
 
@@ -564,6 +561,19 @@ await test("applies schema.sql + migration-001.sql + migration-002.sql and execu
     d1.execSqlFile(path.join(rootDir, "schema.sql"));
     d1.execSqlFile(path.join(rootDir, "migration-001.sql"));
     d1.execSqlFile(path.join(rootDir, "migration-002.sql"));
+    d1.execSqlFile(path.join(rootDir, "migration-003.sql"));
+
+    // Login throttling storage: insert, increment, and reset an expired window.
+    const now = Math.floor(Date.now() / 1000);
+    await d1.prepare("INSERT INTO auth_login_attempts(attempt_key, failures, reset_at) VALUES (?, 1, ?)")
+      .bind("account:test-key", now + 900).run();
+    await d1.prepare(`INSERT INTO auth_login_attempts (attempt_key, failures, reset_at)
+      VALUES (?, 1, ?) ON CONFLICT(attempt_key) DO UPDATE SET
+      failures = CASE WHEN reset_at <= ? THEN 1 ELSE failures + 1 END,
+      reset_at = CASE WHEN reset_at <= ? THEN excluded.reset_at ELSE reset_at END`)
+      .bind("account:test-key", now + 900, now, now).run();
+    assert.equal((await d1.prepare("SELECT failures FROM auth_login_attempts WHERE attempt_key = ?")
+      .bind("account:test-key").first()).failures, 2);
 
     // Seed tenant and active call session
     await d1
@@ -602,9 +612,59 @@ await test("applies schema.sql + migration-001.sql + migration-002.sql and execu
       .prepare("SELECT * FROM call_sessions WHERE id = ? AND tenant_slug = ?")
       .bind("sess-001", "al-nour")
       .first();
-    assert.equal(sessionRow.booking_confirmed, 1);
+    assert.equal(sessionRow.booking_confirmed, 0, "Local request must not be shown as a confirmed appointment");
+    assert.equal(actionRes.bookingConfirmed, false);
+    assert.equal(guardUnconfirmedBookingClaim("تم حجز الموعد", false), "طلب الموعد اتسجل، ولسه محتاج تأكيد من المنشأة.");
+    assert.equal(guardUnconfirmedBookingClaim("تم حجز الموعد", true), "تم حجز الموعد");
+    // Provider confirmation requires both successful response and an explicit receipt ID.
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response(JSON.stringify({ confirmed: true, confirmation_id: "PROV-001" }), {
+        status: 200, headers: { "Content-Type": "application/json" }
+      });
+      const confirmedRes = await executeTenantBusinessAction({
+        db: d1, sessionId: "sess-001", tenantSlug: "al-nour", action: "book_appointment",
+        slots: { name: "شريف سعيد", phone: "01012345678", date: "2026-11-12", time: "16:30" },
+        idempotencyKey: "idem-confirm", contactEncKey: testEncKey,
+        webhookUrl: "https://provider.invalid/appointments"
+      });
+      assert.equal(confirmedRes.ok, true);
+      assert.equal(confirmedRes.bookingConfirmed, true);
+      assert.equal((await d1.prepare("SELECT booking_confirmed FROM call_sessions WHERE id = ?")
+        .bind("sess-001").first()).booking_confirmed, 1);
+      globalThis.fetch = async () => new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      const acceptedRes = await executeTenantBusinessAction({
+        db: d1, sessionId: "sess-001", tenantSlug: "al-nour", action: "book_appointment",
+        slots: { name: "شريف سعيد", phone: "01012345678", date: "2026-11-12", time: "16:30" },
+        idempotencyKey: "idem-accepted", contactEncKey: testEncKey,
+        webhookUrl: "https://provider.invalid/appointments"
+      });
+      assert.equal(acceptedRes.bookingConfirmed, false);
+    } finally { globalThis.fetch = originalFetch; }
+    const missingSessionRes = await executeTenantBusinessAction({
+      db: d1, sessionId: "absent", tenantSlug: "al-nour", action: "book_appointment",
+      slots: { name: "شريف سعيد", phone: "01012345678", date: "2026-11-12", time: "16:30" },
+      idempotencyKey: "idem-absent", contactEncKey: testEncKey
+    });
+    assert.equal(missingSessionRes.ok, false, "Missing DB row cannot result in successful business action");
     assert.equal(sessionRow.selected_slot, "2026-11-12 16:30");
     assert.equal(sessionRow.selected_doctor, "د. كريم");
+    await d1.prepare("INSERT INTO tenants (id, slug, name) VALUES (?, ?, ?)")
+      .bind("c_other", "other", "شركة أخرى").run();
+    await d1.prepare("INSERT INTO tenant_knowledge (id, tenant_slug, category, faq_text) VALUES (?, ?, ?, ?)")
+      .bind("kn-other", "other", "general", "سرية تامة تخص شركة أخرى").run();
+    await d1.prepare("INSERT INTO tenant_knowledge (id, tenant_slug, category, faq_text) VALUES (?, ?, ?, ?)")
+      .bind("kn-a", "al-nour", "hours", "مواعيد العمل صباحاً").run();
+    const localResults = await searchMod.searchClientData(d1, "al-nour", "مواعيد", "knowledge");
+    assert.equal(localResults.length, 1);
+    assert.equal(localResults[0].id, "kn-a");
+    assert.equal((await searchMod.searchClientData(d1, "al-nour", "سرية", "all")).length, 0);
+    assert.equal((await searchMod.searchClientData(d1, "al-nour", "كريم", "calls")).length, 1);
+    const adminResults = await searchMod.searchAdminData(d1, "شركة أخرى");
+    assert.ok(adminResults.some(r => r.kind === "tenant" && r.id === "other"));
+    const parsed = searchMod.parseSearchInput(new URL("https://x/api/client/search?q=%D9%83%D8%B1%D9%8A%D9%85&scope=knowledge"), ["all", "knowledge", "calls"]);
+    assert.equal(parsed.q, "كريم");
+    assert.equal(searchMod.parseSearchInput(new URL("https://x/api/client/search?q=abc&scope=documents"), ["all", "knowledge", "calls"]).status, 422);
     assert.ok(sessionRow.caller_name_enc);
     assert.ok(sessionRow.caller_phone_enc);
 
@@ -618,7 +678,7 @@ await test("applies schema.sql + migration-001.sql + migration-002.sql and execu
     assert.ok(crmLookup);
     assert.equal(crmLookup.callerType, "returning_customer");
     assert.equal(crmLookup.crm.name, "شريف سعيد");
-    assert.equal(crmLookup.crm.total_calls, 1);
+    assert.equal(crmLookup.crm.total_calls, 3);
 
     await upsertCrmContact(d1, "al-nour", "01012345678", {
       title: "دكتور",
@@ -628,7 +688,7 @@ await test("applies schema.sql + migration-001.sql + migration-002.sql and execu
     const crmUpdated = await lookupCaller(d1, "al-nour", "01012345678");
     assert.equal(crmUpdated.crm.title, "دكتور");
     assert.equal(crmUpdated.crm.gender, "male");
-    assert.equal(crmUpdated.crm.total_calls, 2);
+    assert.equal(crmUpdated.crm.total_calls, 4);
 
     // 3. Test learnings persistence, deduplication & applied_count increment, and safety filter
     const evalPayload = {

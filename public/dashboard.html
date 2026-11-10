@@ -175,24 +175,24 @@
         </div>
       </div>
 
-      <!-- 5. INTERNAL SEARCH ENGINE FRONTEND PLACEHOLDER -->
+      <!-- 5. Internal text search over tenant names and calls -->
       <div id="page-search" class="page">
         <div class="hd">
-          <div><h1>محرك البحث الداخلي الشامل</h1><p>واجهة فرونت إند مجهزة لربط محرك البحث الداخلي الخاص بك لاحقاً</p></div>
-          <span class="bd bl">Frontend Placeholder</span>
+          <div><h1>محرك البحث الداخلي الشامل</h1><p>بحث نصي في المنشآت وسجلات المكالمات</p></div>
+          <span class="bd bl">بحث نصي متاح</span>
         </div>
         <div class="card">
           <div style="display:flex;gap:12px;flex-wrap:wrap">
             <div style="flex:1;min-width:260px"><input id="adm-search-q" type="search" placeholder="ابحث في بيانات المنشآت، السجلات، أو الفهارس الداخلية..."></div>
-            <button class="btn" onclick="document.getElementById('adm-search-status').textContent='الاستعلام جاهز للإرسال إلى الباك إند الخاص بك: ' + document.getElementById('adm-search-q').value">بحث داخلي</button>
+            <button class="btn" onclick="runAdminSearch()">بحث داخلي</button>
           </div>
         </div>
-        <div class="card" style="min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border-style:dashed;background:#FBFDFF">
+        <div class="card" id="admin-search-results" style="min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border-style:dashed;background:#FBFDFF">
           <div class="ki" style="width:52px;height:52px;border-radius:15px;margin-bottom:12px">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
           </div>
           <h3 id="adm-search-status">منطقة نتائج محرك البحث الداخلي</h3>
-          <p class="sub" style="max-width:480px;margin-top:8px">جاهزة للربط البرمجي بالباك إند المحلي الخاص بك في وقت لاحق.</p>
+          <p class="sub" style="max-width:480px;margin-top:8px">اكتب اسم منشأة أو موضوع مكالمة للبحث النصي في البيانات الموجودة.</p>
         </div>
       </div>
     </main>
@@ -200,6 +200,7 @@
 </div>
 
 <script src="/js/onboarding.js"></script>
+<script src="/js/search-ui.js"></script>
 <script>
 const INDUSTRY_LABELS = {
   general: 'عام / شركات وأعمال',
@@ -234,6 +235,11 @@ function showPage(name, navEl) {
   if (name === 'guards') loadGuards();
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function safeSlug(value) { return /^[a-zA-Z0-9_-]+$/.test(String(value)) ? value : ''; }
+
 async function loadOverview() {
   try {
     const [metrics, calls, status] = await Promise.all([
@@ -256,21 +262,17 @@ async function loadOverview() {
 function renderCalls(calls) {
   const tbody = document.getElementById('calls-table');
   if (!calls.length) {
-    tbody.innerHTML = `
-      <tr><td>08 نوفمبر 2026 — 10:42</td><td><b>مجموعة النور للأعمال</b></td><td>حجز موعد استشارة</td><td><span class="bd ok">تم الرد</span></td><td class="num">02:14</td></tr>
-      <tr><td>08 نوفمبر 2026 — 10:18</td><td><b>شركة الواحة العقارية</b></td><td>استفسار عن المشروعات</td><td><span class="bd ok">تم الرد</span></td><td class="num">01:05</td></tr>
-      <tr><td>08 نوفمبر 2026 — 09:55</td><td><b>مكتب الميزان القانوني</b></td><td>موعد استشارة تعاقدية</td><td><span class="bd ok">تم الرد</span></td><td class="num">01:48</td></tr>
-    `;
+    tbody.innerHTML = '<tr><td colspan="5" class="sub">لا توجد مكالمات مسجلة حتى الآن.</td></tr>';
     return;
   }
   tbody.innerHTML = calls.map(c => {
     const badge = c.call_status === 'completed' ? '<span class="bd ok">تم الرد</span>'
       : c.call_status === 'abandoned' ? '<span class="bd mi">مكالمة فائتة</span>' : '<span class="bd wip">قيد المعالجة</span>';
-    const dur = c.ended_at ? `${Math.floor((c.ended_at - c.started_at) / 60)} د` : '01:15';
+    const dur = c.ended_at ? `${Math.floor((c.ended_at - c.started_at) / 60)} د` : '—';
     return `<tr>
       <td>${new Date(c.started_at * 1000).toLocaleString('ar-EG')}</td>
-      <td><b>${c.tenant_name || c.tenant_slug}</b></td>
-      <td>${c.selected_doctor || 'استفسار عام'}</td>
+      <td><b>${escapeHtml(c.tenant_name || c.tenant_slug)}</b></td>
+      <td>${escapeHtml(c.selected_doctor || 'استفسار عام')}</td>
       <td>${badge}</td>
       <td class="num">${dur}</td>
     </tr>`;
@@ -284,10 +286,7 @@ async function loadTenants() {
     const tenants = data.tenants || [];
     const tbody = document.getElementById('tenants-table');
     if (!tenants.length) {
-      tbody.innerHTML = `
-        <tr><td><b>مجموعة النور للأعمال</b></td><td class="ltr"><a class="lk" href="/c/al-nour">/c/al-nour</a></td><td><span class="bd bl">تجاري وأعمال</span></td><td>production_pbx</td><td><span class="bd ok">نشطة</span></td><td><a class="lk" href="/c/al-nour">معاينة</a></td></tr>
-        <tr><td><b>شركة الواحة العقارية</b></td><td class="ltr"><a class="lk" href="/c/alwaha">/c/alwaha</a></td><td><span class="bd bl">تطوير عقاري</span></td><td>pilot_14d</td><td><span class="bd ok">نشطة</span></td><td><a class="lk" href="/c/alwaha">معاينة</a></td></tr>
-      `;
+      tbody.innerHTML = '<tr><td colspan="6" class="sub">لم تتم إضافة منشآت بعد.</td></tr>';
       return;
     }
     tbody.innerHTML = tenants.map(t => {
@@ -295,12 +294,12 @@ async function loadTenants() {
         : t.status === 'suspended' ? '<span class="bd mi">متوقفة</span>' : '<span class="bd wip">تجريبية</span>';
       const indLabel = INDUSTRY_LABELS[t.industry] || t.industry || 'عام / أعمال';
       return `<tr>
-        <td><b>${t.name}</b></td>
-        <td class="ltr"><a class="lk" href="/c/${t.slug}">/c/${t.slug}</a></td>
-        <td><span class="bd bl">${indLabel}</span></td>
-        <td>${t.plan_tier}</td>
+        <td><b>${escapeHtml(t.name)}</b></td>
+        <td class="ltr"><a class="lk" href="/c/${safeSlug(t.slug)}">/c/${safeSlug(t.slug)}</a></td>
+        <td><span class="bd bl">${escapeHtml(indLabel)}</span></td>
+        <td>${escapeHtml(t.plan_tier)}</td>
         <td>${status}</td>
-        <td><a class="lk" href="/c/${t.slug}">فتح صفحة المكالمة</a></td>
+        <td><a class="lk" href="/c/${safeSlug(t.slug)}">فتح صفحة المكالمة</a></td>
       </tr>`;
     }).join('');
   } catch (err) { console.error(err); }
@@ -323,10 +322,10 @@ async function createTenant() {
       showToast('تم إنشاء حساب المنشأة وتفعيل الرابط بنجاح');
       showPage('tenants');
     } else {
-      showToast('تم تسجيل بيانات المنشأة');
+      showToast('تعذر إنشاء المنشأة. تحقق من المدخلات أو الصلاحيات.');
     }
   } catch (err) {
-    showToast('تم تسجيل المنشأة في العرض');
+    showToast('تعذر الاتصال بالخادم لإنشاء المنشأة.');
   }
 }
 
@@ -339,33 +338,39 @@ async function loadGuards() {
     if (gCfg.config?.system_prompt) {
       document.getElementById('global-prompt-input').value = gCfg.config.system_prompt;
     }
-    const guards = gList.guards || [
-      { industry: 'general', guard_text: 'التزم بالمعلومات المعتمدة للمنشأة ولا تمنح وعوداً خارج النطاق.' },
-      { industry: 'legal', guard_text: 'لا تقدم استشارة قانونية ملزمة أو رأي قانوني محدد. أحّل المتصل لمحامٍ مختص.' },
-      { industry: 'real_estate', guard_text: 'لا تلتزم بأسعار محددة أو مواعيد تسليم نهائية دون الرجوع للمبيعات.' },
-      { industry: 'finance', guard_text: 'لا تقدم نصائح استثمارية أو مالية ملزمة.' },
-      { industry: 'healthcare', guard_text: 'لا تقدم أي تشخيص طبي أو نصائح علاجية. وجه المتصل للمختص.' }
-    ];
+    const guards = gList.guards || [];
     document.getElementById('guards-list').innerHTML = guards.map(g => `
       <div class="mt" style="align-items:flex-start;flex-direction:column;gap:6px">
-        <div style="display:flex;justify-content:space-between;width:100%"><b>${INDUSTRY_LABELS[g.industry] || g.industry}</b><span class="bd ok">مفعّل</span></div>
-        <span class="sub">${g.guard_text || 'ضابط قياسي للقطاع'}</span>
+        <div style="display:flex;justify-content:space-between;width:100%"><b>${escapeHtml(INDUSTRY_LABELS[g.industry] || g.industry)}</b><span class="bd ok">مفعّل</span></div>
+        <span class="sub">${escapeHtml(g.guard_text || 'ضابط قياسي للقطاع')}</span>
       </div>
     `).join('');
   } catch (e) {}
 }
 
+async function runAdminSearch() {
+  const q = document.getElementById('adm-search-q').value.trim();
+  if (q.length < 2) { MizanSearch.render('admin-search-results', [], 'اكتب حرفين على الأقل.'); return; }
+  try {
+    MizanSearch.render('admin-search-results', [], 'جاري البحث...');
+    const response = await fetch('/api/admin/search?' + new URLSearchParams({q}), {credentials:'same-origin'});
+    if (!response.ok) throw new Error('Search failed: ' + response.status);
+    MizanSearch.render('admin-search-results', (await response.json()).results || []);
+  } catch { MizanSearch.render('admin-search-results', [], 'تعذر تنفيذ البحث. تحقق من الاتصال والصلاحيات.'); }
+}
+
 async function saveGlobalConfig() {
   const system_prompt = document.getElementById('global-prompt-input').value;
   try {
-    await fetch('/api/admin/global-voice-config', {
+    const res = await fetch('/api/admin/global-voice-config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
       body: JSON.stringify({ system_prompt }),
     });
-  } catch (e) {}
-  showToast('تم تحديث الهوية العامة لميزان بنجاح');
+    if (!res.ok) throw new Error('Save failed: ' + res.status);
+    showToast('تم تحديث الهوية العامة لميزان بنجاح');
+  } catch (e) { showToast('لم تُحفظ التغييرات، حاول مجدداً.'); }
 }
 
 loadOverview();

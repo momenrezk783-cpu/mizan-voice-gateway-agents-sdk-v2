@@ -95,6 +95,7 @@ export interface DeepgramCallbacks {
   onFinalTranscript: (text: string, confidence: number, detectedLanguage: "ar" | "en") => void | Promise<void>;
   onSpeechStarted?: () => void;
   onError?: (error: Error) => void;
+  onStatus?: (status: "connected" | "reconnecting" | "unavailable") => void;
 }
 
 export interface WebSocketLike {
@@ -335,8 +336,8 @@ export class DeepgramStreamingSession {
       }
 
       this.ws = socket;
-      this.reconnectAttempts = 0;
       this.attachSocketListeners(socket);
+      this.callbacks.onStatus?.("connected");
       this.startKeepAlive();
       this.flushPendingAudio();
     } catch (error) {
@@ -401,6 +402,9 @@ export class DeepgramStreamingSession {
     } catch {
       return;
     }
+
+    // A healthy server event, not merely a successful TCP handshake, resets the retry budget.
+    if (data.type === "Metadata" || data.type === "Results") this.reconnectAttempts = 0;
 
     if (data.type === "SpeechStarted") {
       this.callbacks.onSpeechStarted?.();
@@ -529,6 +533,16 @@ export class DeepgramStreamingSession {
         return true;
       } catch (err) {
         console.error("Deepgram audio send failed:", err);
+        // Preserve this speech frame and reconnect instead of silently losing it.
+        if (rms > 0.008 && this.pendingAudioBytes + pcmBytes.byteLength <= DeepgramStreamingSession.MAX_PENDING_AUDIO_BYTES) {
+          this.pendingAudioQueue.push(pcmBytes.slice());
+          this.pendingAudioBytes += pcmBytes.byteLength;
+        }
+        const failedSocket = this.ws;
+        this.ws = null;
+        this.stopKeepAlive();
+        try { failedSocket?.close(1011, "Audio transport failure"); } catch { /* Already disconnected. */ }
+        this.scheduleReconnect();
         return false;
       }
     }
@@ -561,10 +575,18 @@ export class DeepgramStreamingSession {
     const queued = this.pendingAudioQueue;
     this.pendingAudioQueue = [];
     this.pendingAudioBytes = 0;
-    for (const chunk of queued) {
+    for (let i = 0; i < queued.length; i++) {
       try {
-        this.ws.send(chunk.buffer);
+        this.ws.send(queued[i].buffer);
       } catch {
+        // Keep the unsent suffix. Previously all buffered speech was lost here.
+        this.pendingAudioQueue = queued.slice(i);
+        this.pendingAudioBytes = this.pendingAudioQueue.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+        const failedSocket = this.ws;
+        this.ws = null;
+        this.stopKeepAlive();
+        try { failedSocket?.close(1011, "Buffered audio send failure"); } catch { /* Disconnected. */ }
+        this.scheduleReconnect();
         break;
       }
     }
@@ -590,7 +612,13 @@ export class DeepgramStreamingSession {
   }
 
   private scheduleReconnect(): void {
-    if (this.closed || this.reconnectTimer || this.reconnectAttempts >= 3) return;
+    if (this.closed || this.reconnectTimer) return;
+    if (this.reconnectAttempts >= 3) {
+      this.callbacks.onStatus?.("unavailable");
+      this.callbacks.onError?.(new Error("Deepgram unavailable after reconnect attempts"));
+      return;
+    }
+    this.callbacks.onStatus?.("reconnecting");
     const delayMs = Math.min(2000, 250 * Math.pow(2, this.reconnectAttempts++));
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
