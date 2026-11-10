@@ -1,0 +1,106 @@
+# ============================================================================
+# Mizan Voice Gateway — Agents SDK Architecture (v2)
+# ============================================================================
+# Configured for the EXISTING deployed Cloudflare Worker `mizan-voice-gateway`
+# (Account ID: 1070f42f50aba614a00c682d2957befe).
+#
+# Architecture:
+#   - Deepgram Streaming STT (`wss://api.deepgram.com/v1/listen`, `nova-3`)
+#   - Workers AI LLM (`@cf/daily-co/phonellm-mini-alpha-2` + fallback)
+#   - ElevenLabs TTS (`eleven_v4_turbo`, voice ID `P2DK6Lg0vxyKGYj3QOik`)
+#   - Queues for background work (`mizan-background`)
+#   - SQLite-backed DO (`MizanVoiceAgent`) for persistent conversation state
+# ============================================================================
+
+name = "mizan-voice-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-11-08"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "mizanconsult.com/*", zone_name = "mizanconsult.com" },
+  { pattern = "*.mizanconsult.com/*", zone_name = "mizanconsult.com" },
+  { pattern = "voice.mizanconsult.com/*", zone_name = "mizanconsult.com" }
+]
+
+[vars]
+ENVIRONMENT = "production"
+VOICE_WS_BASE = "wss://voice.mizanconsult.com"
+PRIMARY_LLM = "@cf/daily-co/phonellm-mini-alpha-2"
+FALLBACK_LLM = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
+
+# Workers AI — LLM inference
+[ai]
+binding = "AI"
+
+# D1 — Existing deployed multi-tenant database (`mizan-portal-db`)
+[[d1_databases]]
+binding = "DB"
+database_name = "mizan-portal-db"
+database_id = "04efb171-e903-4f16-b9c2-9ab7a0f7c9a6"
+
+# KV — Existing deployed tenant config cache (`mizan-voice-gateway-TENANT_CONFIG`)
+[[kv_namespaces]]
+binding = "TENANT_CONFIG"
+id = "86c3e5359a874940aa6fd73a56b1edaf"
+
+# Durable Object — Existing deployed Voice Agent (`MizanVoiceAgent`, namespace 37830ca27fd24e21ae16b290306be779)
+[[durable_objects.bindings]]
+name = "MIZAN_VOICE_AGENT"
+class_name = "MizanVoiceAgent"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MizanVoiceAgent"]
+
+# Queues — Existing deployed queue (`mizan-background`, ID a32bf6a59de241d89642c7de280986bc)
+[[queues.producers]]
+binding = "BACKGROUND_QUEUE"
+queue = "mizan-background"
+
+[[queues.consumers]]
+queue = "mizan-background"
+max_batch_size = 10
+max_batch_timeout = 5
+
+# Analytics Engine — Per-tenant voice latency metrics
+[[analytics_engine_datasets]]
+binding = "VOICE_METRICS"
+dataset = "mizan_voice_latency"
+
+# Static Assets — Landing page, login, dashboard, client portal, voice page CSS/JS
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
+# Scheduled — Pilot expiry check, stale session cleanup
+[triggers]
+crons = ["*/5 * * * *"]
+
+# Observability — Logs + traces + issues
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+persist = true
+head_sampling_rate = 1
+
+[observability.issues]
+enabled = true
+
+# Secrets on `mizan-voice-gateway` (manage via `wrangler secret put`):
+#   SESSION_SECRET       — HMAC-SHA256 session token signing
+#   CONTACT_ENC_KEY      — 256-bit AES-GCM key for patient PII
+#   ADMIN_PASSKEY_HASH   — Super Admin passkey gate
+#   ELEVENLABS_TTS_KEY   — ElevenLabs TTS API key (voice ID P2DK6Lg0vxyKGYj3QOik)
+#   DEEPGRAM_API_KEY     — Deepgram streaming STT API key
