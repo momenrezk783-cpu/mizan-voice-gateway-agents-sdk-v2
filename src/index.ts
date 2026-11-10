@@ -219,6 +219,13 @@ async function handleApi(
   const path = url.pathname;
 
   try {
+    // Cookie-authenticated state changes must originate from this exact origin (CSRF defense).
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) {
+      const origin = request.headers.get("Origin");
+      if (origin !== url.origin) return json({ error: "Invalid request origin" }, 403);
+      const size = Number(request.headers.get("Content-Length") || 0);
+      if (size > 64 * 1024) return json({ error: "Request body too large" }, 413);
+    }
     // Portal auth
     if (path === "/api/client/auth/login" && request.method === "POST")
       return await portalLogin(request, env);
@@ -237,6 +244,7 @@ async function handleApi(
 
     return json({ error: "Not found" }, 404);
   } catch (err) {
+    if (err instanceof SyntaxError) return json({ error: "Malformed JSON" }, 400);
     console.error("API error:", err);
     return json({ error: "Internal server error" }, 500);
   }
@@ -246,8 +254,51 @@ async function handleApi(
 // Portal Auth
 // ---------------------------------------------------------------------------
 
+// Keys contain only SHA-256 digests of a normalized address or a Cloudflare-supplied IP.
+async function loginRateKey(prefix: string, value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(`${prefix}:${value}`);
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return `${prefix}:${Array.from(new Uint8Array(hash), n => n.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function loginThrottleCheck(env: Env, keys: Array<{ key: string; limit: number }>, now: number): Promise<number> {
+  for (const { key, limit } of keys) {
+    const row = await env.DB.prepare(`SELECT failures, reset_at FROM auth_login_attempts WHERE attempt_key = ?`)
+      .bind(key).first<{ failures: number; reset_at: number }>();
+    if (row && row.reset_at > now && row.failures >= limit) return row.reset_at - now;
+  }
+  return 0;
+}
+
+async function recordFailedLogin(env: Env, keys: Array<{ key: string; limit: number }>, now: number): Promise<void> {
+  for (const { key } of keys) {
+    await env.DB.prepare(`INSERT INTO auth_login_attempts (attempt_key, failures, reset_at)
+        VALUES (?, 1, ?)
+        ON CONFLICT(attempt_key) DO UPDATE SET
+        failures = CASE WHEN reset_at <= ? THEN 1 ELSE failures + 1 END,
+        reset_at = CASE WHEN reset_at <= ? THEN excluded.reset_at ELSE reset_at END`)
+      .bind(key, now + 900, now, now).run();
+  }
+}
+
 async function portalLogin(request: Request, env: Env): Promise<Response> {
-  const { email, password } = await request.json<{ email: string; password: string }>();
+  const input = await request.json<{ email?: unknown; password?: unknown }>();
+  if (!input || typeof input.email !== "string" || typeof input.password !== "string" ||
+      input.email.length > 254 || !input.email.trim() ||
+      input.password.length < 1 || input.password.length > 1024) {
+    return json({ error: "Invalid login input" }, 400);
+  }
+  const email = input.email.trim().toLowerCase();
+  const password = input.password;
+  const now = Math.floor(Date.now() / 1000);
+  const rateKeys = [
+    { key: await loginRateKey("account", email), limit: 8 },
+    { key: await loginRateKey("ip", request.headers.get("CF-Connecting-IP") || "unknown"), limit: 30 }
+  ];
+  const retryAfter = await loginThrottleCheck(env, rateKeys, now);
+  if (retryAfter > 0) {
+    return json({ error: "محاولات كثيرة. حاول لاحقاً." }, 429, { "Retry-After": String(retryAfter) });
+  }
 
   const user = await env.DB.prepare(
     `SELECT id, tenant_slug, email, password_hash, role FROM portal_users WHERE email = ?`
@@ -256,8 +307,10 @@ async function portalLogin(request: Request, env: Env): Promise<Response> {
     .first<{ id: string; tenant_slug: string; email: string; password_hash: string; role: string }>();
 
   if (!user || !(await verifyPassword(password, user.password_hash))) {
+    await recordFailedLogin(env, rateKeys, now);
     return json({ error: "بيانات الدخول غير صحيحة" }, 401);
   }
+  await env.DB.prepare(`DELETE FROM auth_login_attempts WHERE attempt_key = ?`).bind(rateKeys[0].key).run();
 
   const sessionUser = {
     id: user.id,
@@ -864,6 +917,15 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
               console.error('Voice agent error:',m.message);
               s.textContent=m.message||'حدث خطأ في المساعد الصوتي';
               s.className='st error';
+            }
+            if(m.type==='status'&&m.status==='stt_reconnecting'){
+              s.textContent='نعيد الاتصال بخدمة التعرف الصوتي...';s.className='st connecting';
+            }
+            if(m.type==='status'&&m.status==='stt_unavailable'){
+              s.textContent='خدمة التعرف الصوتي غير متاحة حالياً. أنهِ الاتصال وحاول مجدداً.';s.className='st error';
+            }
+            if(m.type==='status'&&m.status==='stt_connected'){
+              s.textContent='متصل — تحدث الآن';s.className='st';
             }
             if(m.type==='status'&&m.status==='listening'){
               s.textContent='متصل — تحدث الآن';

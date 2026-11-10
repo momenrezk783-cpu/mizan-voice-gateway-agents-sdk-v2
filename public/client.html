@@ -678,16 +678,17 @@ async function saveKnowledgeItem() {
   try {
     const url = id ? `/api/client/knowledge/${id}` : `/api/client/knowledge`;
     const method = id ? 'PUT' : 'POST';
-    await fetch(url, {
+    const res = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
       body: JSON.stringify({ category, faq_text }),
     });
+    if (!res.ok) throw new Error('Save failed: ' + res.status);
     showToast('تم حفظ بند المعرفة وتحديث المساعد الصوتي');
-    loadKnowledge();
+    await loadKnowledge();
   } catch (e) {
-    showToast('تم الحفظ محلياً');
+    showToast('لم يتم حفظ بند المعرفة. حاول مجدداً.');
   }
 }
 
@@ -719,7 +720,7 @@ async function loadSettings() {
 
 async function saveSettings() {
   try {
-    await fetch('/api/client/customization', {
+    const res = await fetch('/api/client/customization', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
@@ -728,9 +729,10 @@ async function saveSettings() {
         escalation_phone: document.getElementById('escalation').value,
       }),
     });
+    if (!res.ok) throw new Error('Save failed: ' + res.status);
     showToast('تم حفظ إعدادات الصوت والتخصيص بنجاح');
   } catch (err) {
-    showToast('تم حفظ الإعدادات');
+    showToast('لم تُحفظ إعدادات الصوت. حاول مجدداً.');
   }
 }
 

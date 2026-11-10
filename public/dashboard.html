@@ -321,10 +321,10 @@ async function createTenant() {
       showToast('تم إنشاء حساب المنشأة وتفعيل الرابط بنجاح');
       showPage('tenants');
     } else {
-      showToast('تم تسجيل بيانات المنشأة');
+      showToast('تعذر إنشاء المنشأة. تحقق من المدخلات أو الصلاحيات.');
     }
   } catch (err) {
-    showToast('تم تسجيل المنشأة في العرض');
+    showToast('تعذر الاتصال بالخادم لإنشاء المنشأة.');
   }
 }
 
@@ -350,14 +350,15 @@ async function loadGuards() {
 async function saveGlobalConfig() {
   const system_prompt = document.getElementById('global-prompt-input').value;
   try {
-    await fetch('/api/admin/global-voice-config', {
+    const res = await fetch('/api/admin/global-voice-config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
       body: JSON.stringify({ system_prompt }),
     });
-  } catch (e) {}
-  showToast('تم تحديث الهوية العامة لميزان بنجاح');
+    if (!res.ok) throw new Error('Save failed: ' + res.status);
+    showToast('تم تحديث الهوية العامة لميزان بنجاح');
+  } catch (e) { showToast('لم تُحفظ التغييرات، حاول مجدداً.'); }
 }
 
 loadOverview();

@@ -276,6 +276,11 @@ export class MizanVoiceAgent extends Agent<Env> {
         },
         onError: (error) => {
           console.error("Deepgram STT stream error:", error.message);
+        },
+        onStatus: (status) => {
+          if (this.sessionClosed) return;
+          try { connection.send(JSON.stringify({ type: "status", status: `stt_${status}` })); }
+          catch { /* caller disconnected */ }
         }
       },
       {

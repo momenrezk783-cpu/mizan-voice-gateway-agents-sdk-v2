@@ -12,7 +12,7 @@ import { webcrypto } from "node:crypto"; if (!globalThis.crypto) globalThis.cryp
 //      carry-over, perform_action constraints & idempotency, transfer_to_human, end_call.
 //   4. Prompt & live-state rendering: tag-spoofing protection, <call_context>,
 //      <learned_adaptations>, and <live_state>.
-//   5. D1 database & migration-002 verification against real SQLite engine:
+//   5. D1 database & migration-002/003 verification against real SQLite engine:
 //      learnings upsert, crm_contacts lookup/upsert, call_sessions AES-GCM
 //      booking persistence, call_turns transcript loading, and evaluator safety.
 // ============================================================================
@@ -464,7 +464,7 @@ console.log("\n── 5. D1 Schema, Migration-002 & Evaluator Verification ─�
 
 /**
  * Lightweight D1Database adapter backed by Python's built-in `sqlite3` CLI module
- * so we can test the exact SQL files (`schema.sql`, `migration-001.sql`, `migration-002.sql`)
+ * so we can test the exact SQL files (`schema.sql`, `migration-001.sql`, `migration-002.sql`, `migration-003.sql`)
  * and every parameterized D1 query in `db.ts`.
  */
 class SqliteD1Mock {
@@ -551,7 +551,7 @@ conn.close()`,
   }
 }
 
-await test("applies schema.sql + migration-001.sql + migration-002.sql and executes all D1 queries cleanly", async () => {
+await test("applies schema.sql + migrations 001/002/003 and executes all D1 queries cleanly", async () => {
   const tmpDbPath = `/tmp/mizan_test_${Date.now()}.sqlite`;
   const d1 = new SqliteD1Mock(tmpDbPath);
 
@@ -559,6 +559,19 @@ await test("applies schema.sql + migration-001.sql + migration-002.sql and execu
     d1.execSqlFile(path.join(rootDir, "schema.sql"));
     d1.execSqlFile(path.join(rootDir, "migration-001.sql"));
     d1.execSqlFile(path.join(rootDir, "migration-002.sql"));
+    d1.execSqlFile(path.join(rootDir, "migration-003.sql"));
+
+    // Login throttling storage: insert, increment, and reset an expired window.
+    const now = Math.floor(Date.now() / 1000);
+    await d1.prepare("INSERT INTO auth_login_attempts(attempt_key, failures, reset_at) VALUES (?, 1, ?)")
+      .bind("account:test-key", now + 900).run();
+    await d1.prepare(`INSERT INTO auth_login_attempts (attempt_key, failures, reset_at)
+      VALUES (?, 1, ?) ON CONFLICT(attempt_key) DO UPDATE SET
+      failures = CASE WHEN reset_at <= ? THEN 1 ELSE failures + 1 END,
+      reset_at = CASE WHEN reset_at <= ? THEN excluded.reset_at ELSE reset_at END`)
+      .bind("account:test-key", now + 900, now, now).run();
+    assert.equal((await d1.prepare("SELECT failures FROM auth_login_attempts WHERE attempt_key = ?")
+      .bind("account:test-key").first()).failures, 2);
 
     // Seed tenant and active call session
     await d1

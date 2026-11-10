@@ -27,4 +27,8 @@ assert.ok(admin.includes('escapeHtml(t.name)'), 'Tenant name must be escaped');
 assert.ok(!client.includes('08 نوفمبر 2026'), 'No fabricated client rows');
 assert.ok(!admin.includes('08 نوفمبر 2026'), 'No fabricated admin rows');
 assert.ok(gateway.includes('FROM call_turns WHERE session_id = ? AND tenant_slug = ?'), 'Scope call turns to tenant');
+assert.ok(gateway.includes('origin !== url.origin'), 'Reject cross-site cookie POSTs');
+assert.ok(gateway.includes('loginThrottleCheck(env, rateKeys, now)'), 'Throttle login attempts');
+assert.ok(gateway.includes('Retry-After'), 'Tell clients when rate limit expires');
+assert.ok(readFileSync('src/lib/deepgram-stt.ts','utf8').includes('onStatus?.("unavailable")'), 'Notify callers when STT exhausts retry attempts');
 console.log('Security and honest-product regression checks passed (session TTL, tampering, claims, XSS sinks, tenant isolation, empty states).');

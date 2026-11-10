@@ -95,6 +95,7 @@ export interface DeepgramCallbacks {
   onFinalTranscript: (text: string, confidence: number, detectedLanguage: "ar" | "en") => void | Promise<void>;
   onSpeechStarted?: () => void;
   onError?: (error: Error) => void;
+  onStatus?: (status: "connected" | "reconnecting" | "unavailable") => void;
 }
 
 export interface WebSocketLike {
@@ -335,8 +336,8 @@ export class DeepgramStreamingSession {
       }
 
       this.ws = socket;
-      this.reconnectAttempts = 0;
       this.attachSocketListeners(socket);
+      this.callbacks.onStatus?.("connected");
       this.startKeepAlive();
       this.flushPendingAudio();
     } catch (error) {
@@ -401,6 +402,9 @@ export class DeepgramStreamingSession {
     } catch {
       return;
     }
+
+    // A healthy server event, not merely a successful TCP handshake, resets the retry budget.
+    if (data.type === "Metadata" || data.type === "Results") this.reconnectAttempts = 0;
 
     if (data.type === "SpeechStarted") {
       this.callbacks.onSpeechStarted?.();
@@ -590,7 +594,13 @@ export class DeepgramStreamingSession {
   }
 
   private scheduleReconnect(): void {
-    if (this.closed || this.reconnectTimer || this.reconnectAttempts >= 3) return;
+    if (this.closed || this.reconnectTimer) return;
+    if (this.reconnectAttempts >= 3) {
+      this.callbacks.onStatus?.("unavailable");
+      this.callbacks.onError?.(new Error("Deepgram unavailable after reconnect attempts"));
+      return;
+    }
+    this.callbacks.onStatus?.("reconnecting");
     const delayMs = Math.min(2000, 250 * Math.pow(2, this.reconnectAttempts++));
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
