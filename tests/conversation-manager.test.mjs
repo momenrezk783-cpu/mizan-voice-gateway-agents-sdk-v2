@@ -25,8 +25,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const babel = require("/usr/share/nodejs/@babel/core");
-const presetTypescript = require("/usr/share/nodejs/@babel/preset-typescript");
+const babel = require("@babel/core");
+const presetTypescript = require("@babel/preset-typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");

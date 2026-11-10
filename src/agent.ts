@@ -128,7 +128,6 @@ export class MizanVoiceAgent extends Agent<Env> {
   private clientAudioFormat: "linear16" | "float32" = "linear16";
   private conversation: ChatMessage[] = [];
   private processingTurn = false;
-  private agentSpeakingUntil = 0;
   private lastProcessedTranscript = "";
   private lastProcessedAt = 0;
   private responseLanguage: "ar" | "en" = "ar";
@@ -258,13 +257,21 @@ export class MizanVoiceAgent extends Agent<Env> {
         deepgramKey,
         {
           onInterimTranscript: (interimText) => {
-            if (this.sessionClosed || this.processingTurn) return;
+            if (this.sessionClosed) return;
             if (interimText) {
               try {
                 connection.send(JSON.stringify({ type: "status", status: "transcribing" }));
               } catch {
                 // Ignore if socket closed
               }
+            }
+          },
+          onSpeechStarted: () => {
+            if (this.sessionClosed) return;
+            try {
+              connection.send(JSON.stringify({ type: "control", command: "barge_in" }));
+            } catch {
+              // Ignore if the browser has already disconnected.
             }
           },
           onFinalTranscript: async (finalText, _confidence, detectedLanguage) => {
@@ -341,15 +348,10 @@ export class MizanVoiceAgent extends Agent<Env> {
     if (pcm.byteLength === 0) return;
     const rms = computePcm16Rms(pcm);
 
-    // Half-duplex echo protection
+    // Full duplex: keep streaming microphone audio while TTS is playing.
+    // Acoustic echo cancellation is requested at capture in the browser; do not
+    // time-gate microphone frames here or the caller cannot interrupt the agent.
     const now = Date.now();
-    if (this.processingTurn || now < this.agentSpeakingUntil) {
-      if (this.processingTurn || rms < 0.08) {
-        return;
-      }
-      this.metrics.bargeIns++;
-      this.agentSpeakingUntil = 0;
-    }
 
     if (this.useWorkersAiStt || !this.deepgramSession) {
       this.ingestWhisperPcmFrame(connection, pcm, rms, now);
@@ -792,9 +794,6 @@ export class MizanVoiceAgent extends Agent<Env> {
     try {
       const audio = await this.synthesizeElevenLabsAudio(reply);
       if (this.sessionClosed) return;
-      // Estimate MP3 playback duration at 128 kbps (16,000 bytes/sec) + 350ms acoustic echo tail
-      const estimatedDurationMs = Math.max(600, Math.round((audio.byteLength / 16000) * 1000) + 350);
-      this.agentSpeakingUntil = Date.now() + estimatedDurationMs;
       connection.send(audio);
       connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength }));
     } catch (ttsError) {

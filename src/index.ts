@@ -819,7 +819,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   <script src="/js/onboarding.js"></script>
   <script>
     const TENANT_SLUG="${tenant.slug}",SESSION_ID="${sessionId}",WS_BASE="${wsBase}";
-    let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,timerInt=null,startT=null,callAttempt=0,playbackTime=0;
+    let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,timerInt=null,startT=null,callAttempt=0,playbackTime=0,playbackEpoch=0;const playbackSources=new Set();
     async function toggleCall(){calling?endCall():startCall()}
     async function startCall(){
       const attempt=++callAttempt;
@@ -830,6 +830,9 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         const acquiredStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:16000,channelCount:1}});
         if(attempt!==callAttempt){acquiredStream.getTracks().forEach(t=>t.stop());return}
         stream=acquiredStream;
+        const micSettings=stream.getAudioTracks()[0]?.getSettings?.()||{};
+        console.info('Microphone AEC settings:',{echoCancellation:micSettings.echoCancellation,noiseSuppression:micSettings.noiseSuppression,autoGainControl:micSettings.autoGainControl,sampleRate:micSettings.sampleRate});
+        if(micSettings.echoCancellation===false)console.warn('Browser did not enable acoustic echo cancellation; full-duplex playback may leak into STT.');
         const AudioContextClass=window.AudioContext||window.webkitAudioContext;
         if(!AudioContextClass)throw new Error('المتصفح لا يدعم Web Audio API');
         audioCtx=new AudioContextClass({sampleRate:16000});
@@ -842,7 +845,8 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         audioSource.connect(audioNode);
         audioNode.port.onmessage=e=>{
           if(attempt!==callAttempt||!calling||!ws||ws.readyState!==WebSocket.OPEN||muted)return;
-          if(audioCtx&&audioCtx.currentTime<playbackTime+0.25)return;
+          // Full duplex: keep microphone frames flowing during agent playback.
+          // Browser AEC (echoCancellation) must suppress speaker leakage before STT.
           ws.send(e.data);
         };
         s.textContent='جاري الاتصال بالمساعد...';
@@ -859,6 +863,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
           if(e.data instanceof ArrayBuffer){play(e.data);return}
           try{
             const m=JSON.parse(e.data);
+            if(m.type==='control'&&m.command==='barge_in'){stopPlayback();s.textContent='سمعتك — كمل كلامك';s.className='st';}
             if(m.type==='transcript')addTurn(m.speaker,m.text);
             if(m.type==='error'){
               console.error('Voice agent error:',m.message);
@@ -881,22 +886,32 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         if(attempt===callAttempt){endCall();s.textContent=err.name==='NotAllowedError'?'لم يتم السماح باستخدام الميكروفون':err.message||'تعذر تهيئة الصوت';s.className='st error'}
       }
     }
-    function endCall(){callAttempt++;calling=false;const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
+    function endCall(){stopPlayback();callAttempt++;calling=false;const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
       b.classList.remove('active','connecting');ow.classList.remove('active','connecting');s.textContent='انتهت المكالمة — جاهز لاتصال جديد';s.className='st';c.classList.remove('visible');w.classList.add('idle');
       if(timerInt){clearInterval(timerInt);timerInt=null}if(ws){const oldWs=ws;ws=null;if(oldWs.readyState===WebSocket.CONNECTING||oldWs.readyState===WebSocket.OPEN)oldWs.close()}if(audioNode){audioNode.disconnect();audioNode=null}if(audioSource){audioSource.disconnect();audioSource=null}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}if(audioCtx){const oldCtx=audioCtx;audioCtx=null;oldCtx.close().catch(()=>{})}}
     function toggleMute(){muted=!muted;const b=document.getElementById('muteBtn'),l=document.getElementById('muteLabel');muted?(b.classList.add('muted'),l.textContent='مكتوم'):(b.classList.remove('muted'),l.textContent='كتم')}
     function addTurn(sp,txt){const t=document.getElementById('transcript'),d=document.createElement('div');d.className='turn '+sp;
       const l=document.createElement('div');l.className='turn-label';l.textContent=sp==='caller'?'المتصل':'المساعد';
       const c=document.createElement('div');c.textContent=txt;d.appendChild(l);d.appendChild(c);t.appendChild(d);t.scrollTop=t.scrollHeight}
+    function stopPlayback(){
+      playbackEpoch++;
+      for(const source of playbackSources){try{source.stop()}catch(err){}}
+      playbackSources.clear();
+      playbackTime=audioCtx?audioCtx.currentTime:0;
+    }
     async function play(blob){
       if(!audioCtx)return;
+      const epoch=playbackEpoch;
       try{
         if(audioCtx.state==='suspended')await audioCtx.resume();
         const buf=await audioCtx.decodeAudioData(blob.slice(0));
+        if(epoch!==playbackEpoch||!calling)return;
         const source=audioCtx.createBufferSource();
         source.buffer=buf;
         source.connect(audioCtx.destination);
         const startAt=Math.max(audioCtx.currentTime,playbackTime);
+        playbackSources.add(source);
+        source.onended=()=>playbackSources.delete(source);
         source.start(startAt);
         playbackTime=startAt+buf.duration;
         const s=document.getElementById('status');
