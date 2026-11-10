@@ -612,7 +612,7 @@ function renderClientsTable(calls) {
       <td>${new Date(c.started_at * 1000).toLocaleString('ar-EG')}</td>
       <td><b>${escapeHtml(c.selected_doctor || 'طلب خدمة / استفسار عام')}</b></td>
       <td>${escapeHtml(c.selected_slot || '—')}</td>
-      <td>${c.booking_confirmed ? '<span class="bd ok">حجز مؤكد</span>' : '<span class="bd bl">تم الرد</span>'}</td>
+      <td>${c.booking_confirmed ? '<span class="bd ok">حجز مؤكد</span>' : c.selected_slot ? '<span class="bd wip">طلب قيد التأكيد</span>' : '<span class="bd bl">تم الرد</span>'}</td>
       <td><button class="lk" onclick="showPage('calls');loadSessionDetail('${safeId(c.id)}')">عرض التفاصيل</button></td>
     </tr>
   `).join('');

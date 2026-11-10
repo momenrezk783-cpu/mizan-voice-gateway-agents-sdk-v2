@@ -383,7 +383,10 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
     ).bind(sessionId, slug).all();
 
     return json({
-      session: { ...session, caller_name: callerName, caller_phone: callerPhone },
+      session: { id: session.id, call_status: session.call_status,
+        selected_doctor: session.selected_doctor, selected_slot: session.selected_slot,
+        booking_confirmed: session.booking_confirmed, started_at: session.started_at,
+        ended_at: session.ended_at, caller_name: callerName, caller_phone: callerPhone },
       turns: turns.results,
     });
   }
@@ -399,6 +402,10 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   // POST /api/client/knowledge
   if (path === "/api/client/knowledge" && request.method === "POST") {
     const { faq_text, category } = await request.json<{ faq_text: string; category: string }>();
+    if (typeof faq_text !== "string" || !faq_text.trim() || faq_text.length > 10000 ||
+        (category !== undefined && (typeof category !== "string" || category.length > 50))) {
+      return json({ error: "Invalid knowledge entry" }, 400);
+    }
     const id = crypto.randomUUID();
     await env.DB.prepare(
       `INSERT INTO tenant_knowledge (id, tenant_slug, category, faq_text, updated_at)
@@ -412,10 +419,15 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   const knowledgeMatch = path.match(/^\/api\/client\/knowledge\/([\w-]+)$/);
   if (knowledgeMatch && request.method === "PUT") {
     const { faq_text, category } = await request.json<{ faq_text: string; category: string }>();
-    await env.DB.prepare(
+    if (typeof faq_text !== "string" || !faq_text.trim() || faq_text.length > 10000 ||
+        typeof category !== "string" || category.length > 50) {
+      return json({ error: "Invalid knowledge entry" }, 400);
+    }
+    const change = await env.DB.prepare(
       `UPDATE tenant_knowledge SET faq_text = ?, category = ?, updated_at = unixepoch()
        WHERE id = ? AND tenant_slug = ?`
     ).bind(faq_text, category, knowledgeMatch[1], slug).run();
+    if (change.meta.changes < 1) return json({ error: "Knowledge entry not found" }, 404);
     await invalidateTenantCache(slug, null, env);
     return json({ ok: true });
   }
@@ -456,13 +468,18 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   // PUT /api/client/customization — tenant can ONLY edit customization + escalation
   if (path === "/api/client/customization" && request.method === "PUT") {
     const body = await request.json<{ tenant_customization?: string; escalation_phone?: string }>();
-    await env.DB.prepare(
+    if ((body.tenant_customization !== undefined && (typeof body.tenant_customization !== "string" || body.tenant_customization.length > 8000)) ||
+        (body.escalation_phone !== undefined && (typeof body.escalation_phone !== "string" || body.escalation_phone.length > 40))) {
+      return json({ error: "Invalid customization" }, 400);
+    }
+    const change = await env.DB.prepare(
       `UPDATE tenant_voice_config
        SET tenant_customization = COALESCE(?, tenant_customization),
            escalation_phone = COALESCE(?, escalation_phone),
            updated_at = unixepoch()
        WHERE tenant_slug = ?`
     ).bind(body.tenant_customization ?? null, body.escalation_phone ?? null, slug).run();
+    if (change.meta.changes < 1) return json({ error: "Tenant voice configuration not found" }, 404);
     await invalidateTenantCache(slug, null, env);
     return json({ ok: true });
   }
@@ -550,20 +567,24 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
       system_prompt: string; voice_id?: string;
     }>();
 
+    if (!body || typeof body.slug !== "string" || !/^[a-z0-9][a-z0-9-]{1,62}$/u.test(body.slug) ||
+        typeof body.name !== "string" || body.name.trim().length < 2 || body.name.length > 120 ||
+        typeof body.system_prompt !== "string" || body.system_prompt.length > 8000 ||
+        (body.industry !== undefined && (typeof body.industry !== "string" || body.industry.length > 64))) {
+      return json({ error: "Invalid tenant input" }, 400);
+    }
     const tenantId = `c_${body.slug}`;
-    await env.DB.prepare(
-      `INSERT INTO tenants (id, slug, name, industry, domain, plan_tier, max_concurrent_sessions, theme_color, logo_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      tenantId, body.slug, body.name, body.industry ?? "general", body.domain ?? null,
-      body.plan_tier ?? "pilot_14d", body.max_concurrent_sessions ?? 1,
-      body.theme_color ?? "#1BA6B8", body.logo_url ?? null
-    ).run();
-
-    await env.DB.prepare(
-      `INSERT INTO tenant_voice_config (tenant_slug, system_prompt, voice_id)
-       VALUES (?, ?, ?)`
-    ).bind(body.slug, body.system_prompt, body.voice_id ?? "MX8opBj7bbi4G2cE9j2w").run();
+    // D1 batch is transactional: avoid an orphan tenant if voice config insertion fails.
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO tenants (id, slug, name, industry, domain, plan_tier, max_concurrent_sessions, theme_color, logo_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+        tenantId, body.slug, body.name, body.industry ?? "general", body.domain ?? null,
+        body.plan_tier ?? "pilot_14d", body.max_concurrent_sessions ?? 1,
+        body.theme_color ?? "#1BA6B8", body.logo_url ?? null
+      ),
+      env.DB.prepare(`INSERT INTO tenant_voice_config (tenant_slug, system_prompt, voice_id)
+        VALUES (?, ?, ?)`).bind(body.slug, body.system_prompt, body.voice_id ?? "MX8opBj7bbi4G2cE9j2w")
+    ]);
 
     return json({ ok: true, tenantId }, 201);
   }

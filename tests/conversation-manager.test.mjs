@@ -81,6 +81,7 @@ const {
   sanitizeForSpeech,
   sanitizeForSpeechWithViolations,
   guardUnconfirmedActionClaim,
+  guardUnconfirmedBookingClaim,
   SpeechChunker
 } = guardMod;
 
@@ -611,7 +612,41 @@ await test("applies schema.sql + migrations 001/002/003 and executes all D1 quer
       .prepare("SELECT * FROM call_sessions WHERE id = ? AND tenant_slug = ?")
       .bind("sess-001", "al-nour")
       .first();
-    assert.equal(sessionRow.booking_confirmed, 1);
+    assert.equal(sessionRow.booking_confirmed, 0, "Local request must not be shown as a confirmed appointment");
+    assert.equal(actionRes.bookingConfirmed, false);
+    assert.equal(guardUnconfirmedBookingClaim("تم حجز الموعد", false), "طلب الموعد اتسجل، ولسه محتاج تأكيد من المنشأة.");
+    assert.equal(guardUnconfirmedBookingClaim("تم حجز الموعد", true), "تم حجز الموعد");
+    // Provider confirmation requires both successful response and an explicit receipt ID.
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response(JSON.stringify({ confirmed: true, confirmation_id: "PROV-001" }), {
+        status: 200, headers: { "Content-Type": "application/json" }
+      });
+      const confirmedRes = await executeTenantBusinessAction({
+        db: d1, sessionId: "sess-001", tenantSlug: "al-nour", action: "book_appointment",
+        slots: { name: "شريف سعيد", phone: "01012345678", date: "2026-11-12", time: "16:30" },
+        idempotencyKey: "idem-confirm", contactEncKey: testEncKey,
+        webhookUrl: "https://provider.invalid/appointments"
+      });
+      assert.equal(confirmedRes.ok, true);
+      assert.equal(confirmedRes.bookingConfirmed, true);
+      assert.equal((await d1.prepare("SELECT booking_confirmed FROM call_sessions WHERE id = ?")
+        .bind("sess-001").first()).booking_confirmed, 1);
+      globalThis.fetch = async () => new Response(JSON.stringify({ accepted: true }), { status: 200 });
+      const acceptedRes = await executeTenantBusinessAction({
+        db: d1, sessionId: "sess-001", tenantSlug: "al-nour", action: "book_appointment",
+        slots: { name: "شريف سعيد", phone: "01012345678", date: "2026-11-12", time: "16:30" },
+        idempotencyKey: "idem-accepted", contactEncKey: testEncKey,
+        webhookUrl: "https://provider.invalid/appointments"
+      });
+      assert.equal(acceptedRes.bookingConfirmed, false);
+    } finally { globalThis.fetch = originalFetch; }
+    const missingSessionRes = await executeTenantBusinessAction({
+      db: d1, sessionId: "absent", tenantSlug: "al-nour", action: "book_appointment",
+      slots: { name: "شريف سعيد", phone: "01012345678", date: "2026-11-12", time: "16:30" },
+      idempotencyKey: "idem-absent", contactEncKey: testEncKey
+    });
+    assert.equal(missingSessionRes.ok, false, "Missing DB row cannot result in successful business action");
     assert.equal(sessionRow.selected_slot, "2026-11-12 16:30");
     assert.equal(sessionRow.selected_doctor, "د. كريم");
     await d1.prepare("INSERT INTO tenants (id, slug, name) VALUES (?, ?, ?)")
@@ -643,7 +678,7 @@ await test("applies schema.sql + migrations 001/002/003 and executes all D1 quer
     assert.ok(crmLookup);
     assert.equal(crmLookup.callerType, "returning_customer");
     assert.equal(crmLookup.crm.name, "شريف سعيد");
-    assert.equal(crmLookup.crm.total_calls, 1);
+    assert.equal(crmLookup.crm.total_calls, 3);
 
     await upsertCrmContact(d1, "al-nour", "01012345678", {
       title: "دكتور",
@@ -653,7 +688,7 @@ await test("applies schema.sql + migrations 001/002/003 and executes all D1 quer
     const crmUpdated = await lookupCaller(d1, "al-nour", "01012345678");
     assert.equal(crmUpdated.crm.title, "دكتور");
     assert.equal(crmUpdated.crm.gender, "male");
-    assert.equal(crmUpdated.crm.total_calls, 2);
+    assert.equal(crmUpdated.crm.total_calls, 4);
 
     // 3. Test learnings persistence, deduplication & applied_count increment, and safety filter
     const evalPayload = {

@@ -93,8 +93,8 @@ export interface Session {
   intentFresh: boolean;
   slots: Record<string, SlotValue>;
   slotFailures: Record<string, number>;
-  actionResult: { ok: boolean; detail: string } | null;
-  actionCache: Record<string, { ok: boolean; detail: string }>;
+  actionResult: ActionRunResult | null;
+  actionCache: Record<string, ActionRunResult>;
   totalTurns: number;
   turnsInState: number;
   trace: Array<{ state: CallState; atTurn: number; ts: number; via: "init" | "auto" | "model" }>;
@@ -520,6 +520,7 @@ export function renderLiveState(s: Session, ctx: CallContext, intents: IntentSpe
 
   if (s.actionResult) {
     L.push(`LAST_ACTION_RESULT: ${s.actionResult.ok ? "OK" : "FAILED"} — ${s.actionResult.detail}`);
+    if (s.intent === "book_appointment") L.push(`BOOKING_CONFIRMED: ${s.actionResult.bookingConfirmed === true ? "YES" : "NO — request only, pending confirmation"}`);
   }
   L.push(`TURNS_IN_STATE: ${s.turnsInState} (soft limit ${SOFT_LIMIT[s.state]})`);
   if (s.turnsInState > SOFT_LIMIT[s.state] && s.state !== "ENDED") {
@@ -595,8 +596,9 @@ export function buildTools(intents: IntentSpec[] = DEFAULT_INTENTS) {
 }
 
 export interface ActionRunResult {
-  ok: boolean;
+  ok: boolean; // Whether the request was durably recorded.
   detail: string;
+  bookingConfirmed?: boolean; // Only true after explicit provider confirmation; NOT merely a local request.
 }
 
 export interface ToolDeps {

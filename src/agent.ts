@@ -19,7 +19,8 @@ import {
   detectNonEgyptian,
   extractCallerTitleAndName,
   guardUnconfirmedActionClaim,
-   resolvePersonAddressPolicy,
+  guardUnconfirmedBookingClaim,
+  resolvePersonAddressPolicy,
   sanitizeForSpeech,
   sanitizeForSpeechWithViolations,
   type ConversationState,
@@ -636,7 +637,10 @@ export class MizanVoiceAgent extends Agent<Env> {
       missingSlotLabels: missingLabels
     });
 
-    reply = sanitizeForSpeech(actionGuarded.text, this.personTitleContext);
+    const bookingSafeText = this.cmSession.intent === "book_appointment"
+      ? guardUnconfirmedBookingClaim(actionGuarded.text, this.cmSession.actionResult?.bookingConfirmed === true)
+      : actionGuarded.text;
+    reply = sanitizeForSpeech(bookingSafeText, this.personTitleContext);
     if (!reply) reply = "ممكن توضح لي طلبك أكتر؟";
 
     this.conversation.push({ role: "user", content: transcript }, { role: "assistant", content: reply });

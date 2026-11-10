@@ -429,18 +429,21 @@ export async function executeTenantBusinessAction(opts: {
       const selectedSlot = `${dateStr} ${timeStr}`;
       const selectedDoctor = slots.doctor ? cleanPromptLine(slots.doctor, 80) : null;
 
-      await db
+      const updateResult = await db
         .prepare(
           `UPDATE call_sessions
            SET caller_name_enc = COALESCE(?, caller_name_enc),
                caller_phone_enc = COALESCE(?, caller_phone_enc),
                selected_doctor = COALESCE(?, selected_doctor),
                selected_slot = ?,
-               booking_confirmed = 1
+               booking_confirmed = 0
            WHERE id = ? AND tenant_slug = ?`
         )
         .bind(nameEnc, phoneEnc, selectedDoctor, selectedSlot, sessionId, tenantSlug)
         .run();
+      const changes = (updateResult as { meta?: { changes?: number }; changes?: number }).meta?.changes
+        ?? (updateResult as { changes?: number }).changes ?? 0;
+      if (changes < 1) return { ok: false, detail: "Call session does not exist or is not owned by this tenant." };
 
       await upsertCrmContact(db, tenantSlug, callerPhone, {
         name: callerName,
@@ -451,7 +454,7 @@ export async function executeTenantBusinessAction(opts: {
       const subject = action === "request_callback" ? "طلب معاودة اتصال" : "شكوى عميل";
       const detailText = cleanPromptLine(slots.topic || slots.issue || subject, 300);
 
-      await db
+      const updateResult = await db
         .prepare(
           `UPDATE call_sessions
            SET caller_name_enc = COALESCE(?, caller_name_enc),
@@ -461,6 +464,9 @@ export async function executeTenantBusinessAction(opts: {
         )
         .bind(nameEnc, phoneEnc, `${subject}: ${detailText.slice(0, 80)}`, sessionId, tenantSlug)
         .run();
+      const changes = (updateResult as { meta?: { changes?: number }; changes?: number }).meta?.changes
+        ?? (updateResult as { changes?: number }).changes ?? 0;
+      if (changes < 1) return { ok: false, detail: "Call session does not exist or is not owned by this tenant." };
 
       // Also record in `client_queries` if the table exists in D1
       try {
@@ -474,8 +480,8 @@ export async function executeTenantBusinessAction(opts: {
           )
           .bind(
             crypto.randomUUID(),
-            callerName,
-            slots.email ?? null,
+            "متصل مسجل — راجع سجل المكالمة",
+            null,
             subject,
             redactPII(detailText),
             nowIso,
@@ -484,8 +490,9 @@ export async function executeTenantBusinessAction(opts: {
             "[مشفر في سجل المكالمة]"
           )
           .run();
-      } catch {
-        // Non-fatal if client_queries table is not present in a minimal test database
+      } catch (error) {
+        if (action === "create_ticket") return { ok: false, detail: "Ticket table unavailable; request noted in call session only." };
+        // A callback remains tracked in the call session even without a separate ticket record.
       }
 
       await upsertCrmContact(db, tenantSlug, callerPhone, {
@@ -501,16 +508,19 @@ export async function executeTenantBusinessAction(opts: {
     return { ok: false, detail: "Database error while recording the request." };
   }
 
-  // Optional external HTTPS webhook dispatch (if configured for the tenant)
+  // A provider must return an explicit confirmation receipt; HTTP 2xx alone only means accepted.
+  let providerConfirmed = false;
   if (opts.webhookUrl) {
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(opts.webhookUrl);
       if (parsedUrl.protocol !== "https:") {
-        return { ok: false, detail: "Webhook URL must use HTTPS." };
+        return action === "book_appointment" ? { ok: true, bookingConfirmed: false, detail: "Appointment request saved; confirmation unavailable." }
+          : { ok: false, detail: "Webhook URL must use HTTPS." };
       }
     } catch {
-      return { ok: false, detail: "Webhook URL is invalid." };
+      return action === "book_appointment" ? { ok: true, bookingConfirmed: false, detail: "Appointment request saved; confirmation unavailable." }
+        : { ok: false, detail: "Webhook URL is invalid." };
     }
 
     const body = JSON.stringify({
@@ -536,21 +546,39 @@ export async function executeTenantBusinessAction(opts: {
         signal: AbortSignal.timeout(8000)
       });
       if (!res.ok) {
-        return { ok: false, detail: `Webhook returned HTTP ${res.status}.` };
+        return action === "book_appointment"
+          ? { ok: true, bookingConfirmed: false, detail: "Appointment request saved locally; confirmation is pending." }
+          : { ok: false, detail: `Webhook returned HTTP ${res.status}.` };
+      }
+      if (action === "book_appointment") {
+        const receipt = await res.json().catch(() => null);
+        providerConfirmed = receipt?.confirmed === true && typeof receipt.confirmation_id === "string" && receipt.confirmation_id.length > 0;
       }
     } catch {
-      return { ok: false, detail: "Could not reach tenant action webhook." };
+      return action === "book_appointment"
+        ? { ok: true, bookingConfirmed: false, detail: "Appointment request saved locally; confirmation is pending." }
+        : { ok: false, detail: "Could not reach tenant action webhook." };
+    }
+    if (action === "book_appointment" && providerConfirmed) {
+      const confirmation = await db.prepare(
+        `UPDATE call_sessions SET booking_confirmed = 1 WHERE id = ? AND tenant_slug = ?`
+      ).bind(sessionId, tenantSlug).run();
+      const changes = (confirmation as { meta?: { changes?: number }; changes?: number }).meta?.changes
+        ?? (confirmation as { changes?: number }).changes ?? 0;
+      if (changes < 1) return { ok: false, detail: "Confirmation could not be persisted." };
     }
   }
 
   const summaryDetail =
     action === "book_appointment"
-      ? `Appointment booked for ${slots.date} at ${slots.time}.`
+      ? providerConfirmed
+        ? `Appointment confirmed by provider for ${slots.date} at ${slots.time}.`
+        : `Appointment request saved for ${slots.date} at ${slots.time}; confirmation is pending.`
       : action === "request_callback"
         ? "Callback request registered."
         : "Support ticket created.";
 
-  return { ok: true, detail: summaryDetail };
+  return { ok: true, detail: summaryDetail, ...(action === "book_appointment" ? { bookingConfirmed: providerConfirmed } : {}) };
 }
 
 /**
