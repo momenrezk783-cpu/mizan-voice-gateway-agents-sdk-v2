@@ -318,8 +318,8 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
 
     const turns = await env.DB.prepare(
       `SELECT turn_index, speaker, transcript_redacted, latency_ms, created_at
-       FROM call_turns WHERE session_id = ? ORDER BY turn_index ASC`
-    ).bind(sessionId).all();
+       FROM call_turns WHERE session_id = ? AND tenant_slug = ? ORDER BY turn_index ASC`
+    ).bind(sessionId, slug).all();
 
     return json({
       session: { ...session, caller_name: callerName, caller_phone: callerPhone },
@@ -418,7 +418,7 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
       status: "نشط ويعمل بشكل طبيعي",
       knowledge_count: knowledgeCount?.count ?? 0,
       avg_latency: avgLatency?.avg ? Math.round(avgLatency.avg) : null,
-      uptime: "99.9%",
+      uptime: null,
     });
   }
 
@@ -594,8 +594,8 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
       status: "نشط ويعمل بشكل طبيعي",
       active_tenants: tenantCount?.count ?? 0,
       knowledge_count: knowledgeCount?.count ?? 0,
-      avg_latency: avgLatency?.avg ? Math.round(avgLatency.avg) : 340,
-      uptime: "99.9%",
+      avg_latency: avgLatency?.avg != null ? Math.round(avgLatency.avg) : null,
+      uptime: null,
     });
   }
 

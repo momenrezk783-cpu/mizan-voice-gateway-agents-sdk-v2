@@ -40,7 +40,8 @@ export async function createSessionResponse(
   user: SessionUser,
   env: { SESSION_SECRET: string }
 ): Promise<string> {
-  const token = await signToken(user, env.SESSION_SECRET);
+  const now = Math.floor(Date.now() / 1000);
+  const token = await signToken({ ...user, iat: now, exp: now + SESSION_TTL }, env.SESSION_SECRET);
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_TTL}`;
 }
 
@@ -68,7 +69,7 @@ export function canAccessTenant(
 // ---------------------------------------------------------------------------
 
 async function signToken(
-  payload: SessionUser,
+  payload: SessionUser & { iat: number; exp: number },
   secret: string
 ): Promise<string> {
   const enc = new TextEncoder();
@@ -89,7 +90,7 @@ async function signToken(
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  const payloadB64 = btoa(JSON.stringify(payload))
+  const payloadB64 = btoa(String.fromCharCode(...enc.encode(JSON.stringify(payload))))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
@@ -101,12 +102,13 @@ async function verifyToken(
   token: string,
   secret: string
 ): Promise<SessionUser> {
-  const [payloadB64, sigB64] = token.split(".");
-  if (!payloadB64 || !sigB64) throw new Error("Invalid token format");
+  const parts = token.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) throw new Error("Invalid token format");
+  const [payloadB64, sigB64] = parts;
 
-  // Decode payload
-  const payloadJson = atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
-  const payload = JSON.parse(payloadJson) as SessionUser;
+  // Decode only after checking token shape. Claims are trusted only after verifying the HMAC.
+  const payloadBytes = Uint8Array.from(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+  const payloadJson = new TextDecoder("utf-8", { fatal: true }).decode(payloadBytes);
 
   // Verify signature
   const enc = new TextEncoder();
@@ -127,7 +129,20 @@ async function verifyToken(
   const valid = await crypto.subtle.verify("HMAC", key, sigBytes, data);
   if (!valid) throw new Error("Invalid signature");
 
-  return payload;
+  const payload: unknown = JSON.parse(payloadJson);
+  if (!payload || typeof payload !== "object") throw new Error("Invalid claims");
+  const claims = payload as Partial<SessionUser> & { iat?: number; exp?: number };
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isInteger(claims.iat) || !Number.isInteger(claims.exp) ||
+      claims.exp! <= now || claims.iat! > now + 60 ||
+      claims.exp! <= claims.iat! || claims.exp! - claims.iat! > SESSION_TTL ||
+      typeof claims.id !== "string" || !claims.id ||
+      typeof claims.email !== "string" || !claims.email ||
+      typeof claims.tenantSlug !== "string" ||
+      (claims.role !== "super_admin" && claims.role !== "clinic_admin")) {
+    throw new Error("Expired or invalid session claims");
+  }
+  return { id: claims.id, email: claims.email, role: claims.role, tenantSlug: claims.tenantSlug };
 }
 
 function parseCookie(request: Request, name: string): string | null {

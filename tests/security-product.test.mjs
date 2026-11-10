@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+const require=createRequire(import.meta.url),ts=require('typescript');
+function importTs(path){const code=ts.transpileModule(readFileSync(path,'utf8'),{fileName:path,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;return import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));}
+const {createSessionResponse,getSessionUser,canAccessTenant,clearSessionCookie}=await importTs('src/lib/auth.ts');
+const user={id:'u01',email:'مؤمن@example.com',role:'clinic_admin',tenantSlug:'clinic-1'};
+const env={SESSION_SECRET:'test-long-session-secret-not-for-production'};
+const cookie=await createSessionResponse(user,env);
+assert.match(cookie,/HttpOnly; Secure; SameSite=Strict; Max-Age=604800/);
+const token=cookie.match(/=(.*?);/)[1];
+const request=tok=>new Request('https://mizanconsult.com',{headers:{Cookie:`__Host-mizan_session=${tok}`}});
+assert.deepEqual(await getSessionUser(request(token),env),user);
+assert.equal(canAccessTenant(user,'some-other-tenant'),false);
+assert.equal(canAccessTenant(user,'clinic-1'),true);
+assert.equal(await getSessionUser(request(token+'xx'),env),null);
+const decoded=JSON.parse(Buffer.from(token.split('.')[0].replace(/-/g,'+').replace(/_/g,'/'),'base64').toString());
+assert.equal(decoded.exp-decoded.iat,604800);
+async function signed(claims){const json=JSON.stringify(claims),payload=Buffer.from(json).toString('base64url');const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(env.SESSION_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']);const sig=Buffer.from(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(json))).toString('base64url');return `${payload}.${sig}`;}
+assert.equal(await getSessionUser(request(await signed({...decoded,exp:decoded.iat-1})),env),null,'Expired signed token must be rejected');
+assert.equal(await getSessionUser(request(await signed({...decoded,iat:decoded.iat+604800+600})),env),null,'Future-issued token must be rejected');
+assert.equal(await getSessionUser(request(await signed(user)),env),null,'Legacy indefinite tokens must be rejected');
+assert.match(clearSessionCookie(),/Max-Age=0/);
+const client=readFileSync('public/client.html','utf8'),admin=readFileSync('public/dashboard.html','utf8'),gateway=readFileSync('src/index.ts','utf8');
+assert.ok(client.includes('escapeHtml(t.transcript_redacted)'), 'Transcript text must be escaped');
+assert.ok(admin.includes('escapeHtml(t.name)'), 'Tenant name must be escaped');
+assert.ok(!client.includes('08 نوفمبر 2026'), 'No fabricated client rows');
+assert.ok(!admin.includes('08 نوفمبر 2026'), 'No fabricated admin rows');
+assert.ok(gateway.includes('FROM call_turns WHERE session_id = ? AND tenant_slug = ?'), 'Scope call turns to tenant');
+console.log('Security and honest-product regression checks passed (session TTL, tampering, claims, XSS sinks, tenant isolation, empty states).');
