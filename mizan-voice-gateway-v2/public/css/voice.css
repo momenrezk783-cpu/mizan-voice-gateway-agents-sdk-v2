@@ -124,3 +124,70 @@ body {
 .turn-label { font-size: 11.5px; font-weight: 700; color: #5B6B80; margin-bottom: 2px; }
 .ft { font-size: 12px; color: #5B6B80; margin-top: 18px; }
 .ft a { color: #2563EB; font-weight: 600; text-decoration: none; }
+
+/* Responsive polish for the live voice surface; audio and WebSocket logic are untouched. */
+body {
+  background:
+    radial-gradient(circle at 50% 12%, rgba(37, 99, 235, .08), transparent 34rem),
+    #eef2f7;
+}
+.vp {
+  min-height: 100svh;
+  padding-top: max(28px, env(safe-area-inset-top));
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, #fbfcff 0%, #f4f7fb 100%);
+}
+.av {
+  box-shadow: 0 0 0 8px rgba(220, 231, 248, .62), 0 12px 28px rgba(15, 45, 82, .08);
+}
+.st {
+  border: 1px solid rgba(14, 122, 79, .08);
+}
+.st.connecting { border-color: rgba(138, 90, 0, .12); }
+.st.error { border-color: rgba(180, 35, 24, .12); }
+.mic {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.mic:focus-visible, .mute-button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, .34);
+  outline-offset: 5px;
+}
+.mic.connecting {
+  background: var(--mz-accent-2, #1d4ed8);
+  animation: mz-pulse 1.3s ease-in-out infinite;
+}
+.card {
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(15, 45, 82, .035), 0 12px 28px rgba(15, 45, 82, .055);
+}
+.transcript { overscroll-behavior: contain; scrollbar-width: thin; }
+.turn { overflow-wrap: anywhere; }
+@keyframes mz-pulse {
+  50% { box-shadow: 0 0 0 17px rgba(37, 99, 235, .10), 0 10px 24px var(--mz-accent-glow); }
+}
+@media (min-width: 560px) {
+  .vp {
+    min-height: calc(100svh - 32px);
+    margin: 16px auto;
+    border: 1px solid #e5eaf1;
+    border-radius: 24px;
+  }
+}
+@media (max-width: 360px) {
+  .vp { padding-inline: 18px; }
+  .mic { width: 92px; height: 92px; }
+  .vp h1 { font-size: 21px; }
+}
+[dir="ltr"] body { direction: ltr; }
+[dir="ltr"] .card { text-align: left; }
+@media (prefers-reduced-motion: reduce) {
+  .mic.connecting { animation: none; }
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* Shared bilingual control on the public voice page. */
+.mz-language-toggle { display:inline-flex;align-items:center;justify-content:center;min-width:82px;min-height:38px;padding:7px 12px;border:1px solid #d7e0ec;border-radius:11px;background:#fff;color:#17365d;font:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap; }
+.mz-language-toggle:focus-visible { outline:3px solid rgba(37,99,235,.32);outline-offset:2px; }
+html[dir="ltr"] .vp,html[dir="ltr"] .top-row { direction:ltr; }
+html[dir="ltr"] .top-row .lg { margin-inline-end:auto; }
