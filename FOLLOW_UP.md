@@ -1,5 +1,5 @@
 # FOLLOW_UP
 
-On branch `fix/remove-response-language-and-raw-audio-checks`, removed the custom Whisper `initial_prompt` and the extra LLM response-language instructions, while preserving Whisper's `language: "ar"` and the existing TTS language configuration.
-Removed the added per-sample clamp/invalid-value sanitization from raw Float32 audio conversion; the PCM worklet's existing speech detection and chunking were left unchanged, and no raw-audio logging was present in the inspected files.
-Source changes were reread for verification, but no build, runtime test, PR, merge, or deployment was performed; `main` and Production remain unchanged.
+On branch `feat/preline-ui-refresh`, merged PR [#18](https://github.com/momenrezk783-cpu/mizan-voice-gateway-agents-sdk-v2/pull/18) into `main` as squash commit `e7b7b8d1a6f52f2c6645dccaa5fed2d961220140`; it adds Arabic/English switching, RTL/LTR support, and responsive styling without changing voice transport logic.
+Production deployment completed successfully through GitHub Actions runs [#44](https://github.com/momenrezk783-cpu/mizan-voice-gateway-agents-sdk-v2/actions/runs/42728081836), [#45](https://github.com/momenrezk783-cpu/mizan-voice-gateway-agents-sdk-v2/actions/runs/42728237944), and [#46](https://github.com/momenrezk783-cpu/mizan-voice-gateway-agents-sdk-v2/actions/runs/42728491506); live HTTP checks returned 200 for the landing, login, dashboard, client, search, i18n JS, and Preline CSS assets.
+Rollback baseline retained from immediately before this release: Worker version `96492cd9-e833-4c16-8ad2-269c0eb89f7d`; visual browser validation and a real end-to-end voice call regression test remain outstanding.
