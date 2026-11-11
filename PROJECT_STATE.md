@@ -1,3 +1,5 @@
+> **LATEST VERIFIED STATUS (2026-11-11):** The authoritative GitHub baseline is `main` at `22e09c6`; the GitHub feature branch `feat/mizan-sprints-7-12` at `be78671` has unrelated Git history but identical root application code. The new review branch `work/mizan-unified-review-20261111` starts from `main` and includes voice prompt fix `6669fdf`. **START HERE:** `docs/START_HERE_MIZAN.md`. The historical notes below describe the earlier isolated ZIP workflow and should not be interpreted as the current GitHub state. No production deployment is authorized by this record.
+
 # Mizan — Project Source of Truth
 
 _Last reviewed: 2026-11-10, after isolated local Sprints 7–12. Status: **development / laboratory snapshot only — NO-GO for production**._
