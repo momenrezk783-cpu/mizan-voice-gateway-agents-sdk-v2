@@ -6,6 +6,11 @@ on:
       - main
       - "feat/**"
   workflow_dispatch:
+    inputs:
+      diagnostics_only:
+        description: 'Inspect runtime settings/errors and probe AI with synthetic text; do not deploy'
+        type: boolean
+        default: false
 
 jobs:
   deploy:
@@ -32,8 +37,15 @@ jobs:
       - name: Isolated local bundle validation
         run: npm run bundle:check
 
+      - name: Diagnose Workers AI without deployment
+        if: inputs.diagnostics_only == true
+        run: node scripts/diagnose-workers-ai.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Deploy to Cloudflare Workers (main branch only)
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && inputs.diagnostics_only != true
         run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
