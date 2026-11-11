@@ -9,7 +9,6 @@ import { createAI, type CloudflareLanguageModelId } from "agents/models/ai-sdk";
 import {
   resolveTenant,
   getGlobalVoiceConfig,
-  getIndustryGuard,
   getTenantVoiceConfig,
   getTenantKnowledge,
   getHQElevenLabsConfig,
@@ -48,7 +47,6 @@ import {
 import { evaluateCall } from "./lib/conversation-manager/evaluator";
 import {
   executeTenantBusinessAction,
-  fetchActiveLearnings,
   lookupCaller,
   persistCallEvaluationAndLearnings,
   updateCallSessionOutcome,
@@ -107,9 +105,6 @@ export class MizanVoiceAgent extends Agent<Env> {
   private sessionId: string | null = null;
   private tenantName = "ميزان";
   private tenantIndustry = "general";
-  private globalPrompt = "";
-  private industryGuard = "";
-  private tenantCustomization = "";
   private knowledgeContext = "";
   private businessHours: string | null = null;
   private escalationPhone: string | null = null;
@@ -165,7 +160,6 @@ export class MizanVoiceAgent extends Agent<Env> {
     this.tenantIndustry = tenant.industry || "general";
 
     const globalConfig = await getGlobalVoiceConfig(this.env);
-    this.globalPrompt = globalConfig.system_prompt;
     this.elevenLabsConfig = this.tenantSlug === "mizan-hq"
       ? await getHQElevenLabsConfig(this.env)
       : {
@@ -179,10 +173,8 @@ export class MizanVoiceAgent extends Agent<Env> {
       console.error("HQ ElevenLabs config is missing; public-page voice settings are intentionally ignored");
     }
 
-    this.industryGuard = await getIndustryGuard(this.tenantIndustry, this.env);
 
     const voiceConfig = await getTenantVoiceConfig(this.tenantSlug, this.env);
-    this.tenantCustomization = voiceConfig?.tenant_customization ?? "";
     this.escalationPhone = voiceConfig?.escalation_phone ?? null;
 
     const knowledge = await getTenantKnowledge(this.tenantSlug, this.env);
@@ -537,15 +529,10 @@ export class MizanVoiceAgent extends Agent<Env> {
       const escalationHint = this.escalationPhone ? ` أو تواصل فوراً مع طوارئ المكان على ${this.escalationPhone}` : "";
       reply = `سلامتك، الأعراض دي محتاجة تدخل طبي فوري. من فضلك اتصل بالإسعاف حالاً على رقم 123 أو توجه لأقرب مستشفى طوارئ${escalationHint}.`;
     } else {
-      const activeLearnings = await fetchActiveLearnings(this.env.DB, this.tenantSlug, 6);
       const buildPrompt = () => buildManagedSystemPrompt({
-        globalPrompt: this.globalPrompt,
-        industryGuard: this.industryGuard,
-        tenantCustomization: this.tenantCustomization,
         escalationPhone: this.escalationPhone,
         ctx: toolDeps.ctx,
         personContext: this.personTitleContext,
-        learnings: activeLearnings,
         liveState: renderLiveState(this.cmSession, toolDeps.ctx, this.intents),
         language: this.responseLanguage
       });
@@ -799,9 +786,6 @@ export class MizanVoiceAgent extends Agent<Env> {
     const toolDeps = this.createToolDeps();
     const liveState = renderLiveState(this.cmSession, toolDeps.ctx, this.intents);
     return buildManagedSystemPrompt({
-      globalPrompt: this.globalPrompt,
-      industryGuard: this.industryGuard,
-      tenantCustomization: this.tenantCustomization,
       escalationPhone: this.escalationPhone,
       ctx: toolDeps.ctx,
       personContext: this.personTitleContext,

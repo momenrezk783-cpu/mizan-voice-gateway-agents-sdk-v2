@@ -108,6 +108,36 @@ await test('requested voice overrides stale global KV and HQ saved voice', async
   assert.equal(hq.voice_id,env.MIZAN_VOICE_ID); assert.equal(hq.stability,0.6);
 });
 
+await test('database persona overrides and automatic learnings cannot enter the final prompt', () => {
+  const opts={ctx:context(),personContext:{},liveState:'CURRENT_STATE: GREETING',language:'ar',
+    globalPrompt:'GLOBAL_PERSONA_OVERRIDE',industryGuard:'DB_GUARD_OVERRIDE',
+    tenantCustomization:'TENANT_PERSONA_OVERRIDE',learnings:['LEARNED_PERSONA_OVERRIDE']};
+  const rendered=prompts.buildManagedSystemPrompt(opts);
+  for(const marker of ['GLOBAL_PERSONA_OVERRIDE','DB_GUARD_OVERRIDE','TENANT_PERSONA_OVERRIDE','LEARNED_PERSONA_OVERRIDE']) {
+    assert.ok(!rendered.includes(marker),marker);
+  }
+  assert.match(rendered,/يا بعدي/);
+  assert.match(rendered,/ميزان شركة لتطوير الذكاء الاصطناعي/);
+  assert.match(rendered,/never volunteer that a whole sector is excluded/);
+  const healthcare=context();healthcare.business.industry='healthcare';
+  assert.match(prompts.buildManagedSystemPrompt({...opts,ctx:healthcare}),/لا تقدم تشخيصاً طبياً/);
+});
+
+await test('operational facts can change without changing the code-owned persona', () => {
+  const first=context();first.business.hours='الأحد من 9 إلى 5';
+  first.business.knowledge='عرض نوفمبر: خصم 10%. إجازة الجمعة.';
+  const opts={ctx:first,personContext:{},liveState:'CURRENT_STATE: ACTION',language:'ar'};
+  const before=prompts.buildManagedSystemPrompt(opts);
+  const second=structuredClone(first);second.business.hours='الأحد من 10 إلى 6';
+  second.business.knowledge='تم إلغاء عرض نوفمبر. إجازة السبت.';
+  const after=prompts.buildManagedSystemPrompt({...opts,ctx:second});
+  assert.match(before,/عرض نوفمبر: خصم 10%/);assert.match(before,/الأحد من 9 إلى 5/);
+  assert.match(after,/تم إلغاء عرض نوفمبر/);assert.match(after,/الأحد من 10 إلى 6/);
+  assert.doesNotMatch(after,/خصم 10%/);
+  assert.ok(before.startsWith(prompts.STATIC_MASTER_RULES));
+  assert.ok(after.startsWith(prompts.STATIC_MASTER_RULES));
+});
+
 await test('actual agent retains early turns and identity without a response token cap', async () => {
   const calls=[], audioRequests=[], sends=[];
   const oldFetch=globalThis.fetch;
