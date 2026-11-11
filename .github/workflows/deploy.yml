@@ -5,35 +5,47 @@ on:
     branches:
       - main
       - "feat/**"
+  pull_request:
   workflow_dispatch:
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    name: Validate & Deploy Worker
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+permissions:
+  contents: read
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    name: Validate Worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run bundle:check
 
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund
-
-      - name: TypeScript validation
-        run: npm run typecheck
-
-      - name: Regression tests
-        run: npm test
-
-      - name: Isolated local bundle validation
-        run: npm run bundle:check
-
-      - name: Deploy to Cloudflare Workers (main branch only)
-        if: github.ref == 'refs/heads/main'
+  deploy:
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    name: Release production Worker
+    # Configure required reviewers and main-only branches in repository Settings.
+    environment: production
+    concurrency:
+      group: mizan-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Enforce release evidence gate
+        run: npm run release:gate
+      - name: Deploy to Cloudflare Workers
         run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -20,10 +20,14 @@ import { parseSearchInput, searchClientData, searchAdminData } from "./lib/searc
 import { loginRateKey, loginThrottleCheck, recordFailedLogin } from "./lib/login-throttle";
 import { summarizeLatency } from "./lib/operational-metrics";
 import { isRequestStatus, listTenantRequests, updateTenantRequestStatus } from "./lib/crm";
+import { processBackgroundMessage } from "./lib/background";
 import { getTenantMonthlyUsage, getUtcMonthBounds } from "./lib/billing";
 
 // Re-export the Agent class so Wrangler can find it
 export { MizanVoiceAgent };
+import { UUID, privateVoiceKey, reserveVoiceCall, verifyCallTicket, claimVoiceCall, releaseVoiceCall } from "./lib/voice-access";
+import { InputError, readJsonBody, validateFields, text, integer, oneOf, domain, logo } from "./lib/request-validation";
+import { migrateLegacyCrmContacts } from "./lib/secure-crm";
 
 interface Env {
   DB: D1Database;
@@ -47,6 +51,8 @@ interface Env {
 
 interface BackgroundMessage {
   type: "record_turn" | "end_session" | "record_usage";
+  eventId?: string;
+  occurredAt?: number;
   tenantSlug: string;
   sessionId: string;
   speaker?: string;
@@ -164,6 +170,7 @@ export default {
     ctx.waitUntil(Promise.all([
       expireStaleSessions(env),
       expirePilots(env),
+      env.DB.prepare(`DELETE FROM voice_admissions WHERE created_at < unixepoch() - 86400`).run(),
     ]));
   },
 };
@@ -186,7 +193,7 @@ async function handleVoiceWebSocket(
 
   const slug = match[1];
   const requestedSessionId = url.searchParams.get("session_id");
-  if (requestedSessionId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(requestedSessionId)) {
+  if (requestedSessionId && !UUID.test(requestedSessionId)) {
     return new Response("Invalid voice session identifier", { status: 400, headers: securityHeaders });
   }
   const sessionId = requestedSessionId ?? crypto.randomUUID();
@@ -197,8 +204,7 @@ async function handleVoiceWebSocket(
     return new Response("Tenant not found or suspended", { status: 404 });
   }
 
-  // Browser-origin check limits cross-site drive-by sessions. Non-browser clients
-  // can omit Origin, so full abuse protection still requires a signed call token.
+  // Origin is required and bound to a single-use signed call ticket.
   const callerOrigin = request.headers.get("Origin");
   if (callerOrigin) {
     const trustedOrigins = new Set([url.origin, "https://mizanconsult.com", "https://www.mizanconsult.com"]);
@@ -210,22 +216,17 @@ async function handleVoiceWebSocket(
     }
   }
 
-  // Enforce per-tenant concurrent session limit
-  if (tenant.max_concurrent_sessions > 0) {
-    const activeCount = await env.DB.prepare(
-      `SELECT COUNT(*) as count FROM call_sessions
-       WHERE tenant_slug = ? AND call_status = 'active'`
-    )
-      .bind(slug)
-      .first<{ count: number }>();
-
-    if ((activeCount?.count ?? 0) >= tenant.max_concurrent_sessions) {
-      return new Response("Maximum concurrent sessions reached for this organization", { status: 429 });
-    }
+  const token = url.searchParams.get("call_token") || "";
+  if (!requestedSessionId || !callerOrigin || !await verifyCallTicket(token, env.SESSION_SECRET, slug, sessionId, callerOrigin)) {
+    return new Response("Invalid or expired call ticket", {status:403, headers:securityHeaders});
+  }
+  if (!await claimVoiceCall(env.DB, slug, sessionId)) {
+    return new Response("Call ticket already used or expired", {status:409, headers:securityHeaders});
   }
 
   // Rewrite the URL so routeAgentRequest sees the instance name as "slug:sessionId"
   const agentUrl = new URL(request.url);
+  agentUrl.searchParams.delete("call_token");
   agentUrl.pathname = `/agents/mizan-voice-agent/${slug}:${sessionId}`;
 
   const agentRequest = new Request(agentUrl, {
@@ -235,7 +236,15 @@ async function handleVoiceWebSocket(
 
   // routeAgentRequest handles DO instantiation + WebSocket upgrade
   // It auto-maps the MIZAN_VOICE_AGENT binding to /agents/mizan-voice-agent/{name}
-  return (await routeAgentRequest(agentRequest, env)) ?? new Response("Agent not found", { status: 404 });
+  try {
+    const response = await routeAgentRequest(agentRequest, env);
+    if (response?.status === 101) return response;
+    await releaseVoiceCall(env.DB,slug,sessionId);
+    return response ?? new Response("Agent not found", {status:404});
+  } catch (error) {
+    await releaseVoiceCall(env.DB,slug,sessionId);
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +267,20 @@ async function handleApi(
       const size = Number(request.headers.get("Content-Length") || 0);
       if (size > 64 * 1024) return json({ error: "Request body too large" }, 413);
     }
+    // Bound actual streamed bytes, including bodies without Content-Length.
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method) && path !== "/api/client/auth/logout") {
+      const body = await readJsonBody(request);
+      request = new Request(request, {body: JSON.stringify(body)});
+    }
+    if (path === "/api/voice/token" && request.method === "POST") {
+      const body = await request.json<{slug?: unknown}>();
+      if (typeof body.slug !== "string" || !/^[a-z0-9][a-z0-9-]{1,62}$/u.test(body.slug)) return json({error:"Invalid tenant"},400);
+      const tenant = await resolveTenant(body.slug,env);
+      if (!tenant) return json({error:"Tenant not found"},404);
+      const ipKey = await privateVoiceKey(env.SESSION_SECRET,request.headers.get("CF-Connecting-IP") || "unknown");
+      const ticket = await reserveVoiceCall(env.DB,tenant.slug,ipKey,tenant.max_concurrent_sessions,url.origin,env.SESSION_SECRET);
+      return ticket ? json(ticket) : json({error:"Call capacity or hourly budget exceeded"},429,{"Retry-After":"60"});
+    }
     // Portal auth
     if (path === "/api/client/auth/login" && request.method === "POST")
       return await portalLogin(request, env);
@@ -276,6 +299,7 @@ async function handleApi(
 
     return json({ error: "Not found" }, 404);
   } catch (err) {
+    if (err instanceof InputError) return json({error:err.message},err.status);
     if (err instanceof SyntaxError) return json({ error: "Malformed JSON" }, 400);
     console.error("API error:", err);
     return json({ error: "Internal server error" }, 500);
@@ -474,23 +498,23 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   // PUT /api/client/voice-config
   if (path === "/api/client/voice-config" && request.method === "PUT") {
     const body = await request.json<{
-      system_prompt?: string; voice_id?: string; allow_medical_advice?: number;
+      voice_id?: string;
       escalation_phone?: string; ttl_seconds?: number;
     }>();
-    await env.DB.prepare(
+    validateFields(body, {voice_id:v => typeof v === "string" && /^[A-Za-z0-9_-]{8,128}$/u.test(v),
+      escalation_phone:text(40), ttl_seconds:integer(60,3600)});
+    const change = await env.DB.prepare(
       `UPDATE tenant_voice_config
-       SET system_prompt = COALESCE(?, system_prompt),
-           voice_id = COALESCE(?, voice_id),
-           allow_medical_advice = COALESCE(?, allow_medical_advice),
+       SET voice_id = COALESCE(?, voice_id),
            escalation_phone = COALESCE(?, escalation_phone),
            ttl_seconds = COALESCE(?, ttl_seconds),
            updated_at = unixepoch()
        WHERE tenant_slug = ?`
     ).bind(
-      body.system_prompt ?? null, body.voice_id ?? null,
-      body.allow_medical_advice ?? null, body.escalation_phone ?? null,
+      body.voice_id ?? null, body.escalation_phone ?? null,
       body.ttl_seconds ?? null, slug
     ).run();
+    if (change.meta.changes < 1) return json({error:"Tenant voice configuration not found"},404);
     await invalidateTenantCache(slug, null, env);
     return json({ ok: true });
   }
@@ -498,6 +522,7 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   // PUT /api/client/customization — tenant can ONLY edit customization + escalation
   if (path === "/api/client/customization" && request.method === "PUT") {
     const body = await request.json<{ tenant_customization?: string; escalation_phone?: string }>();
+    validateFields(body,{tenant_customization:text(8000),escalation_phone:text(40)});
     if ((body.tenant_customization !== undefined && (typeof body.tenant_customization !== "string" || body.tenant_customization.length > 8000)) ||
         (body.escalation_phone !== undefined && (typeof body.escalation_phone !== "string" || body.escalation_phone.length > 40))) {
       return json({ error: "Invalid customization" }, 400);
@@ -610,6 +635,10 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
         (body.industry !== undefined && (typeof body.industry !== "string" || body.industry.length > 64))) {
       return json({ error: "Invalid tenant input" }, 400);
     }
+    validateFields(body, {slug:v=>typeof v === "string" && /^[a-z0-9][a-z0-9-]{1,62}$/u.test(v), name:text(120,2),
+      industry:text(64,1),domain,plan_tier:oneOf("pilot_14d","production_pbx"),max_concurrent_sessions:integer(1,100),
+      theme_color:v=>typeof v === "string" && /^#[0-9a-f]{6}$/iu.test(v),logo_url:logo,system_prompt:text(8000),
+      voice_id:v=>typeof v === "string" && /^[A-Za-z0-9_-]{8,128}$/u.test(v)});
     const tenantId = `c_${body.slug}`;
     // D1 batch is transactional: avoid an orphan tenant if voice config insertion fails.
     await env.DB.batch([
@@ -619,8 +648,8 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
         body.plan_tier ?? "pilot_14d", body.max_concurrent_sessions ?? 1,
         body.theme_color ?? "#1BA6B8", body.logo_url ?? null
       ),
-      env.DB.prepare(`INSERT INTO tenant_voice_config (tenant_slug, system_prompt, voice_id)
-        VALUES (?, ?, ?)`).bind(body.slug, body.system_prompt, body.voice_id ?? DEFAULT_MIZAN_VOICE_ID)
+      env.DB.prepare(`INSERT INTO tenant_voice_config (tenant_slug, system_prompt, tenant_customization, voice_id)
+        VALUES (?, ?, ?, ?)`).bind(body.slug, body.system_prompt, body.system_prompt, body.voice_id ?? DEFAULT_MIZAN_VOICE_ID)
     ]);
 
     return json({ ok: true, tenantId }, 201);
@@ -653,7 +682,11 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
       name?: string; domain?: string; status?: string; plan_tier?: string;
       max_concurrent_sessions?: number; theme_color?: string; logo_url?: string;
     }>();
-    await env.DB.prepare(
+    validateFields(body, {name:text(120,2),domain,status:oneOf("active","suspended","trial"),plan_tier:oneOf("pilot_14d","production_pbx"),
+      max_concurrent_sessions:integer(1,100),theme_color:v=>typeof v === "string" && /^#[0-9a-f]{6}$/iu.test(v),logo_url:logo});
+    const previous = await env.DB.prepare(`SELECT domain FROM tenants WHERE slug = ?`).bind(slug).first<{domain:string|null}>();
+    if (!previous) return json({error:"Tenant not found"},404);
+    const change = await env.DB.prepare(
       `UPDATE tenants
        SET name = COALESCE(?, name), domain = COALESCE(?, domain),
            status = COALESCE(?, status), plan_tier = COALESCE(?, plan_tier),
@@ -667,6 +700,8 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
       body.theme_color ?? null, body.logo_url ?? null, slug
     ).run();
 
+    if (change.meta.changes < 1) return json({error:"Tenant not found"},404);
+    await invalidateTenantCache(slug,previous.domain,env);
     const tenant = await env.DB.prepare(`SELECT domain FROM tenants WHERE slug = ?`).bind(slug).first<{ domain: string | null }>();
     await invalidateTenantCache(slug, tenant?.domain ?? null, env);
     return json({ ok: true });
@@ -733,16 +768,17 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
     return json({ config });
   }
 
-  // PUT /api/admin/global-voice-config — update Mizan identity
+  // PUT /api/admin/global-voice-config — voice selection only; persona is code-owned
   if (path === "/api/admin/global-voice-config" && request.method === "PUT") {
     const body = await request.json<{ system_prompt?: string; voice_id?: string }>();
-    await env.DB.prepare(
+    validateFields(body, {voice_id:v=>typeof v === "string" && /^[A-Za-z0-9_-]{8,128}$/u.test(v)});
+    const change = await env.DB.prepare(
       `UPDATE global_voice_config
-       SET system_prompt = COALESCE(?, system_prompt),
-           voice_id = COALESCE(?, voice_id),
+       SET voice_id = COALESCE(?, voice_id),
            updated_at = unixepoch()
        WHERE id = 1`
-    ).bind(body.system_prompt ?? null, body.voice_id ?? null).run();
+    ).bind(body.voice_id ?? null).run();
+    if (change.meta.changes < 1) return json({error:"Global voice configuration not found"},404);
     await invalidateGlobalCache(env);
     return json({ ok: true });
   }
@@ -760,12 +796,14 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
   if (guardMatch && request.method === "PUT") {
     const industry = guardMatch[1];
     const body = await request.json<{ guard_text?: string; enabled?: number }>();
-    await env.DB.prepare(
+    validateFields(body, {guard_text:text(8000),enabled:oneOf(0,1)});
+    const change = await env.DB.prepare(
       `UPDATE industry_guards
        SET guard_text = COALESCE(?, guard_text),
            enabled = COALESCE(?, enabled)
        WHERE industry = ?`
     ).bind(body.guard_text ?? null, body.enabled ?? null, industry).run();
+    if (change.meta.changes < 1) return json({error:"Industry guard not found"},404);
     await env.TENANT_CONFIG.delete(`industry_guard:${industry}`);
     return json({ ok: true });
   }
@@ -777,38 +815,6 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
 // Background Queue Processor
 // ---------------------------------------------------------------------------
 
-async function processBackgroundMessage(msg: BackgroundMessage, env: Env): Promise<void> {
-  switch (msg.type) {
-    case "record_turn": {
-      const turnId = crypto.randomUUID();
-      await env.DB.prepare(
-        `INSERT INTO call_turns (id, session_id, tenant_slug, turn_index, speaker, transcript_redacted, latency_ms, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())`
-      ).bind(
-        turnId, msg.sessionId, msg.tenantSlug, msg.turnIndex ?? 0,
-        msg.speaker ?? "caller", msg.transcript ?? "", msg.latencyMs ?? null
-      ).run();
-      break;
-    }
-
-    case "end_session": {
-      await env.DB.prepare(
-        `UPDATE call_sessions SET call_status = 'completed', ended_at = unixepoch()
-         WHERE id = ? AND tenant_slug = ?`
-      ).bind(msg.sessionId, msg.tenantSlug).run();
-      break;
-    }
-
-    case "record_usage": {
-      await env.DB.prepare(
-        `INSERT INTO tenant_usage (tenant_slug, metric, value, recorded_at)
-         VALUES (?, 'call_count', 1, unixepoch())`
-      ).bind(msg.tenantSlug).run();
-      break;
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Scheduled Tasks
 // ---------------------------------------------------------------------------
@@ -817,7 +823,9 @@ async function expireStaleSessions(env: Env): Promise<void> {
   await env.DB.prepare(
     `UPDATE call_sessions
      SET call_status = 'abandoned', ended_at = unixepoch()
-     WHERE call_status = 'active' AND started_at < unixepoch() - 1800`
+     WHERE call_status = 'active' AND started_at < unixepoch() - 1800
+       AND NOT EXISTS (SELECT 1 FROM voice_admissions va WHERE va.session_id = call_sessions.id
+         AND va.tenant_slug = call_sessions.tenant_slug AND va.state = 'connected' AND va.expires_at > unixepoch())`
   ).run();
 }
 
@@ -986,8 +994,11 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
           ws.send(e.data);
         };
         s.textContent='جاري الاتصال بالمساعد...';
-        const callSessionId=crypto.randomUUID();
-        const socket=new WebSocket(WS_BASE+'/agents/mizan-voice-agent/'+TENANT_SLUG+'?session_id='+callSessionId);
+        const ticketResponse=await fetch('/api/voice/token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug:TENANT_SLUG})});
+        if(!ticketResponse.ok)throw new Error(ticketResponse.status===429?'سعة المكالمات ممتلئة، حاول لاحقاً':'تعذر السماح بالمكالمة');
+        const ticket=await ticketResponse.json();
+        if(attempt!==callAttempt)return;
+        const socket=new WebSocket(WS_BASE+'/agents/mizan-voice-agent/'+TENANT_SLUG+'?session_id='+encodeURIComponent(ticket.sessionId)+'&call_token='+encodeURIComponent(ticket.token));
         ws=socket;
         socket.binaryType='arraybuffer';
         socket.onopen=()=>{

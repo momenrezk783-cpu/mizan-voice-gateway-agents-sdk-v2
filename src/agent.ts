@@ -11,6 +11,7 @@ import {
   getGlobalVoiceConfig,
   getTenantVoiceConfig,
   getTenantKnowledge,
+  getIndustryGuard,
   getHQElevenLabsConfig,
   type HQElevenLabsConfig
 } from "./lib/tenant";
@@ -52,6 +53,7 @@ import {
   updateCallSessionOutcome,
   upsertCrmContact
 } from "./lib/conversation-manager/db";
+import { MAX_CALL_SECONDS, releaseVoiceCall } from "./lib/voice-access";
 import { redactPII } from "./lib/crypto";
 import {
   DeepgramStreamingSession,
@@ -83,6 +85,8 @@ export interface Env {
 
 export interface BackgroundMessage {
   type: "record_turn" | "end_session" | "record_usage";
+  eventId?: string;
+  occurredAt?: number;
   tenantSlug: string;
   sessionId: string;
   speaker?: string;
@@ -108,6 +112,10 @@ export class MizanVoiceAgent extends Agent<Env> {
   private knowledgeContext = "";
   private businessHours: string | null = null;
   private escalationPhone: string | null = null;
+  private industryGuard = "";
+  private tenantCustomization = "";
+  private callDeadline = 0;
+  private callTimer: ReturnType<typeof setTimeout> | null = null;
   private turnCount = 0;
   private callStartTime = 0;
   private initialized = false;
@@ -160,6 +168,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     this.tenantIndustry = tenant.industry || "general";
 
     const globalConfig = await getGlobalVoiceConfig(this.env);
+    this.industryGuard = await getIndustryGuard(this.tenantIndustry,this.env);
     this.elevenLabsConfig = this.tenantSlug === "mizan-hq"
       ? await getHQElevenLabsConfig(this.env)
       : {
@@ -176,6 +185,10 @@ export class MizanVoiceAgent extends Agent<Env> {
 
     const voiceConfig = await getTenantVoiceConfig(this.tenantSlug, this.env);
     this.escalationPhone = voiceConfig?.escalation_phone ?? null;
+    this.tenantCustomization = voiceConfig?.tenant_customization ?? "";
+    if (this.tenantSlug !== "mizan-hq" && this.elevenLabsConfig && voiceConfig?.voice_id && /^[A-Za-z0-9_-]{8,128}$/u.test(voiceConfig.voice_id)) {
+      this.elevenLabsConfig.voice_id = voiceConfig.voice_id;
+    }
 
     const knowledge = await getTenantKnowledge(this.tenantSlug, this.env);
     this.businessHours = knowledge.schedules ?? knowledge.hours ?? null;
@@ -242,6 +255,22 @@ export class MizanVoiceAgent extends Agent<Env> {
       return;
     }
 
+    if (this.activeConnection || this.sessionClosed) {
+      connection.close(1008,"Call already connected or ended");
+      return;
+    }
+    const admission = await this.env.DB.prepare(`SELECT expires_at FROM voice_admissions
+      WHERE session_id = ? AND tenant_slug = ? AND state = 'connected'`).bind(this.sessionId,this.tenantSlug).first<{expires_at:number}>();
+    if (!admission || admission.expires_at * 1000 <= Date.now()) {
+      connection.close(1008,"Call reservation expired");
+      return;
+    }
+    this.callDeadline = admission.expires_at * 1000;
+    this.callTimer = setTimeout(() => {
+      connection.close(1000,"Maximum call duration reached");
+      void this.onClose(connection,1000,"Maximum call duration reached",true);
+    }, Math.min(MAX_CALL_SECONDS * 1000,this.callDeadline - Date.now()));
+
     // Close any pre-existing STT session to guarantee a single active Deepgram session per call
     if (this.deepgramSession) {
       this.deepgramSession.close();
@@ -307,6 +336,11 @@ export class MizanVoiceAgent extends Agent<Env> {
 
   async onMessage(connection: Connection, message: string | ArrayBuffer | ArrayBufferView) {
     if (this.sessionClosed) return;
+    if (this.callDeadline && Date.now() >= this.callDeadline) {
+      connection.close(1000,"Maximum call duration reached");
+      await this.onClose(connection,1000,"Maximum call duration reached",true);
+      return;
+    }
     if (!this.initialized || !this.tenantSlug || !this.sessionId) {
       connection.send(JSON.stringify({ type: "error", message: "المساعد الصوتي غير جاهز." }));
       return;
@@ -495,7 +529,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     const collectedPhone = this.cmSession.slots.phone?.value ?? null;
     if (collectedPhone && toolDeps.ctx.callerPhone !== collectedPhone) {
       toolDeps.ctx.callerPhone = collectedPhone;
-      const crmMatch = await lookupCaller(this.env.DB, this.tenantSlug, collectedPhone);
+      const crmMatch = await lookupCaller(this.env.DB, this.tenantSlug, collectedPhone, this.env.CONTACT_ENC_KEY);
       if (crmMatch) {
         toolDeps.ctx.callerType = crmMatch.callerType;
         toolDeps.ctx.caller.lastSummary = crmMatch.crm.last_call_summary;
@@ -529,13 +563,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       const escalationHint = this.escalationPhone ? ` أو تواصل فوراً مع طوارئ المكان على ${this.escalationPhone}` : "";
       reply = `سلامتك، الأعراض دي محتاجة تدخل طبي فوري. من فضلك اتصل بالإسعاف حالاً على رقم 123 أو توجه لأقرب مستشفى طوارئ${escalationHint}.`;
     } else {
-      const buildPrompt = () => buildManagedSystemPrompt({
-        escalationPhone: this.escalationPhone,
-        ctx: toolDeps.ctx,
-        personContext: this.personTitleContext,
-        liveState: renderLiveState(this.cmSession, toolDeps.ctx, this.intents),
-        language: this.responseLanguage
-      });
+      const buildPrompt = () => this.buildSystemPrompt(this.responseLanguage);
 
       // Preserve early identity, rejected examples and follow-up context for the
       // active call instead of silently dropping everything before five exchanges.
@@ -786,6 +814,8 @@ export class MizanVoiceAgent extends Agent<Env> {
     const toolDeps = this.createToolDeps();
     const liveState = renderLiveState(this.cmSession, toolDeps.ctx, this.intents);
     return buildManagedSystemPrompt({
+      industryGuard:this.industryGuard,
+      tenantCustomization:this.tenantCustomization,
       escalationPhone: this.escalationPhone,
       ctx: toolDeps.ctx,
       personContext: this.personTitleContext,
@@ -799,6 +829,8 @@ export class MizanVoiceAgent extends Agent<Env> {
     if (this.activeConnection && this.activeConnection !== _connection) return;
     if (this.sessionClosed) return;
     this.sessionClosed = true;
+    if (this.callTimer) clearTimeout(this.callTimer);
+    this.callTimer = null;
     this.activeConnection = null;
     this.releaseCallKeepAlive?.();
     this.releaseCallKeepAlive = null;
@@ -810,13 +842,17 @@ export class MizanVoiceAgent extends Agent<Env> {
 
     if (!this.tenantSlug || !this.sessionId) return;
 
+    await releaseVoiceCall(this.env.DB,this.tenantSlug,this.sessionId);
+    const endedAt = Math.floor(Date.now()/1000);
     await this.env.BACKGROUND_QUEUE.send({
       type: "end_session",
+      occurredAt:endedAt,
       tenantSlug: this.tenantSlug,
       sessionId: this.sessionId
     });
     await this.env.BACKGROUND_QUEUE.send({
       type: "record_usage",
+      occurredAt:endedAt,
       tenantSlug: this.tenantSlug,
       sessionId: this.sessionId
     });
@@ -897,7 +933,7 @@ export class MizanVoiceAgent extends Agent<Env> {
             email: this.cmSession.slots.email?.value ?? null,
             lastSummary: evaluation.call_summary_ar ?? null,
             lastCallAt: Math.floor(Date.now() / 1000)
-          });
+          }, this.env.CONTACT_ENC_KEY);
         }
         console.info("Conversation evaluation saved", {
           sessionId: this.sessionId,

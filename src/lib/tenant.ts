@@ -18,10 +18,9 @@ const LEGACY_VOICE_IDS = new Set([
 ]);
 
 function normalizeVoiceId(raw: unknown, override?: string): string {
-  if (override && /^[A-Za-z0-9_-]{8,128}$/.test(override.trim())) return override.trim();
   const trimmed = typeof raw === "string" ? raw.trim() : "";
   if (!trimmed || LEGACY_VOICE_IDS.has(trimmed) || !/^[A-Za-z0-9_-]{8,128}$/.test(trimmed)) {
-    return DEFAULT_MIZAN_VOICE_ID;
+    return override && /^[A-Za-z0-9_-]{8,128}$/.test(override.trim()) ? override.trim() : DEFAULT_MIZAN_VOICE_ID;
   }
   return trimmed;
 }
@@ -46,6 +45,7 @@ export interface GlobalVoiceConfig {
 
 export interface TenantVoiceConfig {
   tenant_slug: string;
+  voice_id: string;
   tenant_customization: string;  // ADDITIVE — tenant can edit this
   escalation_phone: string | null;
   ttl_seconds: number;
@@ -262,18 +262,21 @@ export async function getTenantVoiceConfig(
 ): Promise<TenantVoiceConfig | null> {
   const cacheKey = `voice_config:${slug}`;
   const cached = await env.TENANT_CONFIG.get(cacheKey, "json");
-  if (cached) return cached as TenantVoiceConfig;
+  if (cached) {
+    const config = cached as TenantVoiceConfig;
+    return {...config,voice_id:LEGACY_VOICE_IDS.has(config.voice_id) ? "" : config.voice_id};
+  }
 
   const row = await env.DB.prepare(
-    `SELECT tenant_slug, tenant_customization, escalation_phone, ttl_seconds
+    `SELECT tenant_slug, voice_id, tenant_customization, escalation_phone, ttl_seconds
      FROM tenant_voice_config WHERE tenant_slug = ?`
   )
     .bind(slug)
     .first<TenantVoiceConfig>();
 
   if (!row) return null;
-  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), { expirationTtl: KV_TTL });
-  return row;
+  await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(row), { expirationTtl: Math.min(3600,Math.max(KV_TTL,row.ttl_seconds || KV_TTL)) });
+  return {...row,voice_id:LEGACY_VOICE_IDS.has(row.voice_id) ? "" : row.voice_id};
 }
 
 // ---------------------------------------------------------------------------

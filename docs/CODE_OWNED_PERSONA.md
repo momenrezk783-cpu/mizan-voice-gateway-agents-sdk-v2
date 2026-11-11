@@ -1,19 +1,27 @@
-# Code-owned Mizan persona
+# Code-owned Mizan persona and saved business context
 
-The active voice prompt is assembled in `src/lib/conversation-manager/prompt.ts`.
-The Egyptian persona, response behavior, HQ identity and sector safety rules are versioned there.
+The active prompt is assembled in `src/lib/conversation-manager/prompt.ts`.
+The core Egyptian persona, honesty rules, confirmation requirements, state machine
+and baseline sector safety rules remain versioned in code.
 
-Legacy D1 `global_voice_config.system_prompt`, `tenant_voice_config.system_prompt`,
-`tenant_voice_config.tenant_customization`, editable industry guard text and evaluator
-learnings no longer enter the active prompt. They remain stored for compatibility;
-editing them does not change a call's personality. Evaluations may still be recorded.
+Saved configuration and compatibility behavior on NEW calls:
+- `global_voice_config.system_prompt` is legacy read-only data and is NEVER sent to the model.
+- Enabled `industry_guards.guard_text`: additional restrictions; cannot relax baseline safety.
+- `tenant_voice_config.tenant_customization`: tenant business facts and preferences.
+- `tenant_knowledge`: services, hours, holidays, current offers and cancellations.
 
-Use `tenant_knowledge` for operational facts: services, hours, holidays, current offers
-and cancellations. These are rendered as business data under the fixed code rules.
-Tenant name, industry, escalation number and voice/audio settings retain their existing
-configuration paths. No services or offers were migrated or deleted.
+Text is bounded and stripped of angle brackets to prevent delimiter spoofing.
+These are prompt boundaries, not proof of resistance to every model prompt injection.
+Evaluator learnings and legacy tenant `system_prompt` do not enter the active prompt.
+The legacy tenant prompt/medical-override fields are no longer writable through the
+voice-config API; use customization for business context. Medical safety stays locked.
 
-Validation: full local test suite, strict TypeScript and isolated bundle check.
-Regression tests verify ignored legacy overrides, retained sector safety, stable persona
-and updated operational facts. These checks do not establish live model compliance or
-speech accent quality. A new call is needed after deployment.
+A valid saved global/HQ voice takes precedence over `MIZAN_VOICE_ID`, which is a
+fallback. A valid per-tenant voice overrides the global voice for non-HQ calls.
+Known deprecated voice IDs fall back to the global/default selection.
+
+Config updates invalidate caches. Already connected calls retain their snapshot;
+new calls use the saved settings (subject to KV propagation).
+
+The prompt builder has no globalPrompt input, and the agent does not forward it.
+Global prompt editing is disabled in the dashboard and rejected by the API.

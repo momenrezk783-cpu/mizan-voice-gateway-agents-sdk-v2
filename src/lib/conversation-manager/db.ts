@@ -16,6 +16,7 @@
 //   - `client_queries` (used for callbacks/tickets in portal)
 // ============================================================================
 
+import { readSecureContact, writeSecureContact, type ContactUpdate } from "../secure-crm";
 import { encryptPII, redactPII } from "../crypto";
 import { containsBannedAddress, type CallerGender } from "./guard";
 import type { ActionRunResult, CallerType } from "./manager";
@@ -220,110 +221,16 @@ export async function persistCallEvaluationAndLearnings(
 // CRM Contact Lookup & Upsert (reconciled with deployed `crm_contacts` table)
 // ---------------------------------------------------------------------------
 
-export interface CrmContactRecord {
-  phone: string;
-  tenant_id: string;
-  title: string | null;
-  name: string | null;
-  gender: CallerGender;
-  total_calls: number;
-  last_call_at: number | null;
-  last_call_summary: string | null;
-  preferences_json: string | null;
-}
+export type { CrmContactRecord } from "../secure-crm";
 
-export async function lookupCaller(
-  db: D1Database,
-  tenantId: string,
-  phone: string
-): Promise<{ callerType: CallerType; crm: CrmContactRecord } | null> {
+export async function lookupCaller(db:D1Database,tenantId:string,phone:string,secret:string) {
   if (!tenantId || !phone) return null;
-  try {
-    const row = await db
-      .prepare(
-        `SELECT phone, tenant_id, title, name, gender, total_calls,
-                last_call_at, last_call_summary, preferences_json
-         FROM crm_contacts
-         WHERE tenant_id = ? AND phone = ?
-         LIMIT 1`
-      )
-      .bind(tenantId, phone)
-      .first<CrmContactRecord>();
-
-    if (!row) return null;
-    const gender: CallerGender =
-      row.gender === "male" || row.gender === "female" ? row.gender : "unknown";
-    return {
-      callerType: "returning_customer",
-      crm: {
-        ...row,
-        gender
-      }
-    };
-  } catch (error) {
-    console.error("CRM caller lookup failed:", error);
-    return null;
-  }
+  const crm = await readSecureContact(db,tenantId,phone,secret);
+  return crm ? {callerType:"returning_customer" as const,crm} : null;
 }
 
-export async function upsertCrmContact(
-  db: D1Database,
-  tenantId: string,
-  phone: string,
-  update: {
-    title?: string | null;
-    name?: string | null;
-    gender?: CallerGender;
-    lastSummary?: string | null;
-    lastCallAt?: number;
-    email?: string | null;
-  }
-): Promise<void> {
-  if (!tenantId || !phone || !/^01[0125]\d{8}$/u.test(phone)) return;
-  try {
-    const safeTitle = update.title ? cleanPromptLine(update.title, 30) : null;
-    const safeName = update.name ? cleanPromptLine(update.name, 60) : null;
-    const safeGender: CallerGender =
-      update.gender === "male" || update.gender === "female" ? update.gender : "unknown";
-    const safeSummary = update.lastSummary
-      ? redactPII(cleanPromptLine(update.lastSummary, 300))
-      : null;
-    const nowSec = update.lastCallAt ?? Math.floor(Date.now() / 1000);
-    const prefsJson = update.email
-      ? JSON.stringify({ email: cleanPromptLine(update.email.toLowerCase(), 120) })
-      : null;
-
-    await db
-      .prepare(
-        `INSERT INTO crm_contacts (
-           phone, tenant_id, title, name, gender, total_calls,
-           last_call_at, last_call_summary, preferences_json, updated_at
-         ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
-         ON CONFLICT(phone, tenant_id) DO UPDATE SET
-           title = COALESCE(excluded.title, crm_contacts.title),
-           name = COALESCE(excluded.name, crm_contacts.name),
-           gender = CASE WHEN excluded.gender != 'unknown' THEN excluded.gender ELSE crm_contacts.gender END,
-           total_calls = COALESCE(crm_contacts.total_calls, 0) + 1,
-           last_call_at = COALESCE(excluded.last_call_at, crm_contacts.last_call_at),
-           last_call_summary = COALESCE(excluded.last_call_summary, crm_contacts.last_call_summary),
-           preferences_json = COALESCE(excluded.preferences_json, crm_contacts.preferences_json),
-           updated_at = excluded.updated_at`
-      )
-      .bind(
-        phone,
-        tenantId,
-        safeTitle,
-        safeName,
-        safeGender,
-        nowSec,
-        safeSummary,
-        prefsJson,
-        nowSec
-      )
-      .run();
-  } catch (error) {
-    console.error("CRM contact upsert failed:", error);
-  }
+export async function upsertCrmContact(db:D1Database,tenantId:string,phone:string,update:ContactUpdate,secret:string):Promise<void> {
+  await writeSecureContact(db,tenantId,phone,update,secret);
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +314,7 @@ export async function executeTenantBusinessAction(opts: {
     };
   }
 
+  if (!contactEncKey?.trim()) return {ok:false,detail:"Contact encryption key is required."};
   let nameEnc: string | null = null;
   let phoneEnc: string | null = null;
   if (contactEncKey && contactEncKey.trim()) {
@@ -449,7 +357,7 @@ export async function executeTenantBusinessAction(opts: {
         name: callerName,
         email: slots.email ?? null,
         lastSummary: `حجز موعد يوم ${dateStr} الساعة ${timeStr}${selectedDoctor ? ` مع ${selectedDoctor}` : ""}`
-      });
+      },contactEncKey!);
     } else if (action === "request_callback" || action === "create_ticket") {
       const subject = action === "request_callback" ? "طلب معاودة اتصال" : "شكوى عميل";
       const detailText = cleanPromptLine(slots.topic || slots.issue || subject, 300);
@@ -499,7 +407,7 @@ export async function executeTenantBusinessAction(opts: {
         name: callerName,
         email: slots.email ?? null,
         lastSummary: `${subject}: ${detailText}`
-      });
+      },contactEncKey!);
     } else {
       return { ok: false, detail: `Unsupported action "${action}".` };
     }

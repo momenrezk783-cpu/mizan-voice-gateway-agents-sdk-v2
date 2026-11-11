@@ -365,7 +365,7 @@
               <h3>التعليمات الإضافية ورسالة الترحيب</h3>
               <p class="sub" style="margin-bottom:14px">تُضاف إلى هوية ميزان الأساسية لتخصيص سلوك المساعد لمنشأتك</p>
               <div class="fld">
-                <label class="l" for="customization">تعليمات خاصة بالمنشأة (tenant_customization)</label>
+                <label class="l" for="customization">معلومات وتفضيلات المنشأة (مع ثبات قواعد الأمان والشخصية)</label>
                 <textarea id="customization" placeholder="أهلاً بحضرتك في منشأتنا، مواعيد العمل، أسماء الأقسام أو المختصين..."></textarea>
               </div>
               <div class="fld">
@@ -833,7 +833,7 @@ async function loadSettings() {
     const res = await fetch('/api/client/voice-config', { credentials: 'same-origin' });
     const data = await res.json();
     const c = data.config || {};
-    document.getElementById('customization').value = c.tenant_customization || c.system_prompt || '';
+    document.getElementById('customization').value = c.tenant_customization || '';
     document.getElementById('escalation').value = c.escalation_phone || '';
   } catch (err) { console.error(err); }
 }
