@@ -156,16 +156,16 @@
 
       <!-- 4. GLOBAL IDENTITY & INDUSTRY GUARDS -->
       <div id="page-guards" class="page">
-        <div class="hd"><div><h1>الهوية العامة لميزان وضوابط الأمان القطاعية</h1><p>إعدادات الطبقة الأولى والثانية المقفولة (Global Identity & Industry Safety Guards)</p></div></div>
+        <div class="hd"><div><h1>شخصية ميزان وضوابط الأمان القطاعية</h1><p>الشخصية ثابتة في الكود؛ معلومات ومهام كل منشأة في إعداداتها الخاصة</p></div></div>
         <div class="g2">
           <div class="card">
-            <h3>الهوية المصرية الموحدة لميزان (Global Voice Config)</h3>
-            <p class="sub" style="margin-bottom:16px">تُحقن تلقائياً في بداية كل مكالمة لجميع المنشآت</p>
+            <h3>الشخصية العامة ثابتة في الكود</h3>
+            <p class="sub" style="margin-bottom:16px">النص القديم محفوظ للتوافق فقط، ولا يُرسل للنموذج. خصّص معلومات النشاط ومهامه من إعدادات المنشأة.</p>
             <div class="fld">
-              <label class="l">النص التأسيسي للهوية المصرية</label>
-              <textarea id="global-prompt-input" style="min-height:130px">أنت ميزان، المساعد الصوتي المصري العام. تتحدث باللهجة المصرية بأسلوب ودود ومهني ومحترم. أنت مساعد عام يتكيف مع أي نشاط تجاري أو خدمي.</textarea>
+              <label class="l">النص العام القديم — للعرض فقط</label>
+              <textarea readonly aria-readonly="true" id="global-prompt-input" style="min-height:130px">أنت ميزان، المساعد الصوتي المصري العام. تتحدث باللهجة المصرية بأسلوب ودود ومهني ومحترم. أنت مساعد عام يتكيف مع أي نشاط تجاري أو خدمي.</textarea>
             </div>
-            <button class="btn" onclick="saveGlobalConfig()">حفظ الهوية العامة</button>
+
           </div>
           <div class="card">
             <h3>ضوابط الحماية حسب القطاع (Industry Guards)</h3>
@@ -341,7 +341,7 @@ async function loadGuards() {
     const guards = gList.guards || [];
     document.getElementById('guards-list').innerHTML = guards.map(g => `
       <div class="mt" style="align-items:flex-start;flex-direction:column;gap:6px">
-        <div style="display:flex;justify-content:space-between;width:100%"><b>${escapeHtml(INDUSTRY_LABELS[g.industry] || g.industry)}</b><span class="bd ok">مفعّل</span></div>
+        <div style="display:flex;justify-content:space-between;width:100%"><b>${escapeHtml(INDUSTRY_LABELS[g.industry] || g.industry)}</b><span class="bd ${g.enabled ? 'ok' : 'warn'}">${g.enabled ? 'مفعّل' : 'معطّل'}</span></div>
         <span class="sub">${escapeHtml(g.guard_text || 'ضابط قياسي للقطاع')}</span>
       </div>
     `).join('');
@@ -359,19 +359,6 @@ async function runAdminSearch() {
   } catch { MizanSearch.render('admin-search-results', [], 'تعذر تنفيذ البحث. تحقق من الاتصال والصلاحيات.'); }
 }
 
-async function saveGlobalConfig() {
-  const system_prompt = document.getElementById('global-prompt-input').value;
-  try {
-    const res = await fetch('/api/admin/global-voice-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ system_prompt }),
-    });
-    if (!res.ok) throw new Error('Save failed: ' + res.status);
-    showToast('تم تحديث الهوية العامة لميزان بنجاح');
-  } catch (e) { showToast('لم تُحفظ التغييرات، حاول مجدداً.'); }
-}
 
 loadOverview();
 </script>

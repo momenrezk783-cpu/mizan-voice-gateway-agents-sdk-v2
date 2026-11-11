@@ -562,6 +562,7 @@ await test("applies schema.sql + migrations 001/002/003 and executes all D1 quer
     d1.execSqlFile(path.join(rootDir, "migration-001.sql"));
     d1.execSqlFile(path.join(rootDir, "migration-002.sql"));
     d1.execSqlFile(path.join(rootDir, "migration-003.sql"));
+    d1.execSqlFile(path.join(rootDir, "migration-004.sql"));
 
     // Login throttling storage: insert, increment, and reset an expired window.
     const now = Math.floor(Date.now() / 1000);
@@ -674,7 +675,7 @@ await test("applies schema.sql + migrations 001/002/003 and executes all D1 quer
     assert.equal(decryptedPhone, "01012345678");
 
     // 2. Test CRM contact lookup & upsert
-    const crmLookup = await lookupCaller(d1, "al-nour", "01012345678");
+    const crmLookup = await lookupCaller(d1, "al-nour", "01012345678",testEncKey);
     assert.ok(crmLookup);
     assert.equal(crmLookup.callerType, "returning_customer");
     assert.equal(crmLookup.crm.name, "شريف سعيد");
@@ -684,8 +685,8 @@ await test("applies schema.sql + migrations 001/002/003 and executes all D1 quer
       title: "دكتور",
       gender: "male",
       lastSummary: "تأكيد موعد كشف"
-    });
-    const crmUpdated = await lookupCaller(d1, "al-nour", "01012345678");
+    },testEncKey);
+    const crmUpdated = await lookupCaller(d1, "al-nour", "01012345678",testEncKey);
     assert.equal(crmUpdated.crm.title, "دكتور");
     assert.equal(crmUpdated.crm.gender, "male");
     assert.equal(crmUpdated.crm.total_calls, 4);

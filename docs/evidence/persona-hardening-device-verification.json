@@ -1,0 +1,15 @@
+{
+  "date": "2026-11-11",
+  "node": "v24.22.1",
+  "platform": "linux",
+  "arch": "arm64",
+  "typecheck": "passed",
+  "regressions": "passed",
+  "isolatedBundle": "passed",
+  "globalPrompt": "not forwarded to model",
+  "tenantBusinessContext": "verified in actual agent request with mocked model",
+  "isoDate": "explicit YYYY-MM-DD across ICU date formats",
+  "deployed": false,
+  "productionDatabaseModified": false,
+  "liveProvidersTested": false
+}

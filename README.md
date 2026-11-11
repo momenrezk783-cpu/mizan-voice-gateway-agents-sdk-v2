@@ -1,3 +1,8 @@
+> Upgrade note: this version adds signed call admission and encrypted CRM storage.
+> Apply migration 004 before deploying; see [the upgrade cheat sheet](docs/HARDENING_UPGRADE.md)
+> for legacy-contact migration, limits, validation and rollback steps. No live deployment
+> or production migration was performed with this source update.
+
 > **CURRENT REVIEW HANDOFF (2026-11-11):** For the current GitHub branches, latest voice fixes, verified test results, and safe deployment boundaries, begin with [`docs/START_HERE_MIZAN.md`](docs/START_HERE_MIZAN.md). Older architectural tables below describe v2 proposals and may not match the deployed source.
 
 > **CURRENT STATE — 2026-11-10:** This README includes historical v2 architecture claims about WorkersAIFluxSTT/WorkersAITTS. The audited Sprint 6+ code actually uses **Deepgram streaming STT**, **Workers AI for LLM**, and **ElevenLabs TTS**, and needs both voice provider credentials. See `PROJECT_STATE.md`, `DECISIONS.md`, `SPRINT_LOG.md`, `docs/SIP_LAB_GUIDE.md` and `docs/TEST_EVIDENCE.md` for verified facts. **Do not use `npm run deploy`, `npm run db:migrate` or GitHub main push as a test; those may affect production.** The BYON SIP code is laboratory-only.

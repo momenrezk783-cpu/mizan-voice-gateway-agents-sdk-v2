@@ -59,8 +59,13 @@ export async function decryptPII(
  * Replaces Egyptian mobile numbers with [رقم موبايل].
  */
 export function redactPII(text: string): string {
-  // Egyptian mobile: 01[0-2,5]XXXXXXXX (11 digits)
-  return text.replace(/\b01[0125]\d{8}\b/g, "[رقم موبايل]");
+  // Normalize Arabic-Indic and Persian digits before matching formatted numbers.
+  const normalized = text.replace(/[٠-٩۰-۹]/gu, c => String(c.charCodeAt(0) - (c <= "٩" ? 0x660 : 0x6f0)));
+  return normalized
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, "[بريد إلكتروني]")
+    .replace(/(?<!\d)(?:\d[\s().-]*){14}(?!\d)/gu, "[رقم قومي]")
+    .replace(/(?<!\d)(?:\+?2[\s().-]*)?0[\s().-]*1[\s().-]*[0125](?:[\s().-]*\d){8}(?!\d)/gu, "[رقم موبايل]")
+    .replace(/(?<!\d)\+[1-9](?:[\s().-]*\d){7,14}(?!\d)/gu, "[رقم هاتف]");
 }
 
 // ---------------------------------------------------------------------------
