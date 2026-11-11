@@ -436,9 +436,9 @@ const OBJECTIVE: Record<CallState, string> = {
   DATA_COLLECTION:
     "Collect ONLY the missing items, one per turn. Read back flagged items once. Never re-ask known items.",
   ACTION:
-    "Execute the request: short filler line → perform_action → report the real outcome in one or two sentences.",
+    "Execute the request: acknowledge briefly → perform_action → explain the real outcome with details needed by the caller.",
   CLOSING:
-    "One-sentence recap, ask ONCE if they need anything else, warm goodbye, then end_call.",
+    "Recap the verified result naturally. If the caller is done or declines, thank them and end_call without asking another question.",
   ENDED: "The call is over. Say nothing more."
 };
 
@@ -641,7 +641,7 @@ export function snapshotSession(s: Session, intents: IntentSpec[] = DEFAULT_INTE
           ? "All data ready. Say a short filler line, then call perform_action."
           : "Answer from business knowledge, then advance_state(CLOSING)."
         : s.state === "CLOSING"
-          ? "Recap in one sentence, ask once if they need anything else, then goodbye + end_call."
+          ? "If the caller is finished or said no, thank them and end_call without a question. Otherwise recap any verified next step."
           : "";
   return {
     state: s.state,
@@ -774,7 +774,7 @@ export async function executeTool(
         ? ok({ detail: res.detail, moved, ...snapshotSession(s, d.intents) })
         : fail("Action failed.", {
             detail: res.detail,
-            next: "Explain in one short sentence, offer at most two alternatives or a human callback."
+            next: "Explain the problem clearly, offer at most two relevant alternatives or a human callback."
           });
     }
 

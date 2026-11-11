@@ -25,3 +25,8 @@ Decisions apply to the isolated development copy; they do not authorize producti
 
 Append a new dated decision or supersede an ID with rationale, code/tests affected, and the approving actor. Do not silently rewrite prior accepted decisions.
 
+
+## Verified Git reconciliation decision — 2026-11-11
+
+- D-012 (accepted for review): Treat `main@22e09c6` as the source baseline. Archive `feat/mizan-sprints-7-12@be78671` because its Git history is unrelated, despite the matching root application tree. Do not use an unrelated-history merge or force-push.
+- D-013 (accepted for review): Place tested voice prompt change `6669fdf` onto a **descendant branch** named `work/mizan-unified-review-20261111`, with a single handoff document at `docs/START_HERE_MIZAN.md`. No production bindings or workflow changes, and no deployment approval implied.
