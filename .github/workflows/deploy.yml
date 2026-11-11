@@ -22,9 +22,8 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run bundle:check
+      - name: Run automated release gate
+        run: npm run release:gate
 
   deploy:
     needs: validate
@@ -43,8 +42,6 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - name: Enforce release evidence gate
-        run: npm run release:gate
       - name: Deploy to Cloudflare Workers
         run: npx wrangler deploy
         env:

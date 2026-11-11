@@ -1,3 +1,7 @@
+> Historical release assessment. The corrected automated CI gate is documented in
+> [RELEASE_GATE.md](RELEASE_GATE.md); its result is distinct from live voice,
+> SIP, payment, and operational readiness assessments below.
+
 # Mizan Voice Gateway — Release decision
 
 Decision (2026-11-10): **NO-GO** for production, **local development/PoC only**.

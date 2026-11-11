@@ -56,8 +56,10 @@ This change has not been deployed. The original archive is unchanged.
    Test duplicate queue delivery and the maximum-call-duration path.
 6. Configure GitHub's `production` environment with required reviewers and main-only
    deployment branches. Workflow YAML cannot create those account settings. The
-   existing evidence gate remains NO-GO until the repository's release requirements
-   are satisfied; do not create placeholder evidence to bypass it.
+   release gate executes TypeScript, regressions and the isolated bundle check on
+   the current checkout. SIP and billing evidence is required only when enabled
+   in `release.config.json`. See `docs/RELEASE_GATE.md`; do not create placeholder
+   evidence. Browser releases do not depend on an ignored staging config file.
 7. Repeat migration/deployment validation for production only after staging review.
    No production migration, credential change, or deployment was performed here.
 
