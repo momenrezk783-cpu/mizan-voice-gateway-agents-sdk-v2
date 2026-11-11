@@ -108,7 +108,7 @@ async function verifyToken(
 
   // Decode only after checking token shape. Claims are trusted only after verifying the HMAC.
   const payloadBytes = Uint8Array.from(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
-  const payloadJson = new TextDecoder("utf-8", { fatal: true }).decode(payloadBytes);
+  const payloadJson = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(payloadBytes);
 
   // Verify signature
   const enc = new TextEncoder();

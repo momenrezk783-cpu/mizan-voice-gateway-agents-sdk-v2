@@ -452,11 +452,12 @@ const SOFT_LIMIT: Record<CallState, number> = {
 
 export function renderLiveState(s: Session, ctx: CallContext, intents: IntentSpec[] = DEFAULT_INTENTS): string {
   const sp = specOf(s, intents);
+  const openInquiry = Boolean(sp && !sp.action && s.state !== "ENDED");
   const L: string[] = [
     "<live_state>",
     `TODAY: ${ctx.clock.todayIso} (${ctx.clock.weekday}) · LOCAL_TIME: ${ctx.clock.localTime} ${ctx.clock.timezone}`,
     `CURRENT_STATE: ${s.state}`,
-    `OBJECTIVE: ${OBJECTIVE[s.state]}`
+    `OBJECTIVE: ${openInquiry ? "Answer the caller's current question using business knowledge. Continue explanations and examples naturally; do not collect contact details or close unless the caller is done." : OBJECTIVE[s.state]}`
   ];
 
   if (s.emergencyDetected) {
@@ -513,7 +514,7 @@ export function renderLiveState(s: Session, ctx: CallContext, intents: IntentSpe
       L.push(
         sp.action
           ? `ACTION: ${sp.action} (call perform_action)`
-          : "ACTION: none — answer from <business_knowledge>, then advance_state(CLOSING)"
+          : "ACTION: none — answer from <business_knowledge>; keep the conversation open for follow-up questions"
       );
     }
   }
@@ -522,8 +523,8 @@ export function renderLiveState(s: Session, ctx: CallContext, intents: IntentSpe
     L.push(`LAST_ACTION_RESULT: ${s.actionResult.ok ? "OK" : "FAILED"} — ${s.actionResult.detail}`);
     if (s.intent === "book_appointment") L.push(`BOOKING_CONFIRMED: ${s.actionResult.bookingConfirmed === true ? "YES" : "NO — request only, pending confirmation"}`);
   }
-  L.push(`TURNS_IN_STATE: ${s.turnsInState} (soft limit ${SOFT_LIMIT[s.state]})`);
-  if (s.turnsInState > SOFT_LIMIT[s.state] && s.state !== "ENDED") {
+  L.push(`TURNS_IN_STATE: ${s.turnsInState}${openInquiry ? " (open inquiry; no collection deadline)" : ` (soft limit ${SOFT_LIMIT[s.state]})`}`);
+  if (!openInquiry && s.turnsInState > SOFT_LIMIT[s.state] && s.state !== "ENDED") {
     L.push(
       "STALLED: too long in this state. Change approach NOW — name the blocker, offer a human callback (intent callback_request) or transfer_to_human."
     );
@@ -639,7 +640,7 @@ export function snapshotSession(s: Session, intents: IntentSpec[] = DEFAULT_INTE
       : s.state === "ACTION"
         ? sp?.action
           ? "All data ready. Say a short filler line, then call perform_action."
-          : "Answer from business knowledge, then advance_state(CLOSING)."
+          : "Answer from business knowledge and continue follow-up questions naturally; close only when the caller is done."
         : s.state === "CLOSING"
           ? "If the caller is finished or said no, thank them and end_call without a question. Otherwise recap any verified next step."
           : "";
@@ -885,8 +886,17 @@ export function resolveSpokenTimeFromSpeech(utterance: string): string | null {
   return null;
 }
 
+export function isInformationalRequest(utterance: string): boolean {
+  return /(?:مثال|أمثلة|امثلة|سيناريو|اشرح|شرح|إزاي|ازاي|كيف|عايز\s+أعرف|عايز\s+اعرف|عايزة\s+أعرف|عايزة\s+اعرف|how\s+(?:does|do|can)|example|explain)/iu.test(stripMarks(utterance));
+}
+
 export function detectCallerIntentFromSpeech(utterance: string, currentIntent: string | null): string | null {
   const text = stripMarks(utterance);
+  // Discussing a capability is not permission to perform it. In particular, a
+  // sales/demo example about appointments must not start patient data collection.
+  if (isInformationalRequest(text)) {
+    return currentIntent && currentIntent !== "inquiry" ? null : "inquiry";
+  }
   if (/(?:أحجز|احجز|حجز|ميعاد\s+كشف|عايز\s+أكشف|عايزة\s+أكشف|موعد|كشف\s+مع|استشارة\s+مع|\bbook\b|\bappointment\b)/iu.test(text)) {
     return "book_appointment";
   }
@@ -896,7 +906,10 @@ export function detectCallerIntentFromSpeech(utterance: string, currentIntent: s
   if (/(?:شكوى|عندي\s+مشكلة|مشكلة\s+في|زعلان|بشتكي|complaint)/iu.test(text)) {
     return "complaint";
   }
-  if (!currentIntent && /(?:سعر|أسعار|بكام|عنوان|فرع|مواعيد\s+العمل|فاتحين|بتقفلوا|تأمين|خدمات)/u.test(text)) {
+  if (!currentIntent && /(?:سعر|أسعار|بكام|عنوان|فرع|مواعيد\s+العمل|فاتحين|بتقفلوا|تأمين|خدمات|بتعملوا|ميزان)/u.test(text)) {
+    return "inquiry";
+  }
+  if (!currentIntent && !isProceduralPhrase(text) && /(?:استفس|بتعمل|بتقدم|تقدر|فكرة|فكره|إيه|ايه|مين|what|how|tell)/iu.test(text)) {
     return "inquiry";
   }
   return null;
@@ -932,49 +945,53 @@ export async function ingestCallerUtterance(
   // 3. Detect intent and slots from caller speech
   const detectedIntent = detectCallerIntentFromSpeech(utterance, session.intent);
   const targetIntentId = detectedIntent ?? session.intent;
+  const explanationOnly = isInformationalRequest(utterance);
   const slotsToUpdate: Record<string, string> = {};
 
   if (extractedCallerName && !isProceduralPhrase(extractedCallerName)) {
     slotsToUpdate.name = extractedCallerName;
   }
 
-  const accumulatedPhone = accumulatePhoneDigits(session, utterance);
-  if (accumulatedPhone) {
-    slotsToUpdate.phone = accumulatedPhone;
-  }
+  // Numbers and dates mentioned inside a requested example are not live slots.
+  if (!explanationOnly) {
+    const accumulatedPhone = accumulatePhoneDigits(session, utterance);
+    if (accumulatedPhone) {
+      slotsToUpdate.phone = accumulatedPhone;
+    }
 
-  const resolvedDate = resolveRelativeDateFromSpeech(utterance, deps.ctx.clock.todayIso);
-  if (resolvedDate) {
-    slotsToUpdate.date = resolvedDate;
-  }
+    const resolvedDate = resolveRelativeDateFromSpeech(utterance, deps.ctx.clock.todayIso);
+    if (resolvedDate) {
+      slotsToUpdate.date = resolvedDate;
+    }
 
-  const resolvedTime = resolveSpokenTimeFromSpeech(utterance);
-  if (resolvedTime) {
-    slotsToUpdate.time = resolvedTime;
-  }
+    const resolvedTime = resolveSpokenTimeFromSpeech(utterance);
+    if (resolvedTime) {
+      slotsToUpdate.time = resolvedTime;
+    }
 
-  const emailMatch = utterance.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/iu);
-  if (emailMatch) {
-    slotsToUpdate.email = emailMatch[0].toLowerCase();
-  }
+    const emailMatch = utterance.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/iu);
+    if (emailMatch) {
+      slotsToUpdate.email = emailMatch[0].toLowerCase();
+    }
 
-  const doctorMatch = stripMarks(utterance).match(/(?:دكتور|دكتورة|دكتوره)\s+([\u0621-\u064A]{2,18})/u);
-  if (doctorMatch && targetIntentId === "book_appointment") {
-    slotsToUpdate.doctor = `د. ${doctorMatch[1]}`;
-  }
+    const doctorMatch = stripMarks(utterance).match(/(?:دكتور|دكتورة|دكتوره)\s+([\u0621-\u064A]{2,18})/u);
+    if (doctorMatch && targetIntentId === "book_appointment") {
+      slotsToUpdate.doctor = `د. ${doctorMatch[1]}`;
+    }
 
-  if (targetIntentId === "callback_request" && !session.slots.topic && utterance.trim().length >= 4) {
-    slotsToUpdate.topic = utterance.trim().slice(0, 120);
-  }
-  if (targetIntentId === "complaint" && !session.slots.issue && utterance.trim().length >= 4) {
-    slotsToUpdate.issue = utterance.trim().slice(0, 140);
+    if (targetIntentId === "callback_request" && !session.slots.topic && utterance.trim().length >= 4) {
+      slotsToUpdate.topic = utterance.trim().slice(0, 120);
+    }
+    if (targetIntentId === "complaint" && !session.slots.issue && utterance.trim().length >= 4) {
+      slotsToUpdate.issue = utterance.trim().slice(0, 140);
+    }
   }
 
   // 4. Check if caller is confirming previously set slots (anti-hallucination: only slots set on an EARLIER turn)
   const sp = deps.intents.find((i) => i.id === targetIntentId) ?? null;
   const confirmedSlots: string[] = [];
   if (
-    sp &&
+    sp && !explanationOnly &&
     session.state === "DATA_COLLECTION" &&
     AFFIRMATIVE_CONFIRM_RX.test(utterance) &&
     !NEGATIVE_REJECT_RX.test(utterance)
@@ -995,21 +1012,21 @@ export async function ingestCallerUtterance(
     if (Object.keys(slotsToUpdate).length > 0) updatePayload.slots = slotsToUpdate;
     if (confirmedSlots.length > 0) updatePayload.confirmed_slots = confirmedSlots;
 
-    // If caller gave booking/contact slots while intent was not yet set, default to book_appointment
-    if (!session.intent && !updatePayload.intent && (slotsToUpdate.date || slotsToUpdate.time || slotsToUpdate.doctor)) {
-      updatePayload.intent = "book_appointment";
-    }
-
     if (session.intent || updatePayload.intent) {
       const outcome = await executeTool(deps, session, "update_slots", updatePayload);
       outcomes.push(outcome);
     }
   }
 
-  // 6. If in CLOSING and caller says they don't need anything else / says goodbye, execute end_call
+  // End an inquiry only on an unambiguous goodbye. "شكرا بس اديني مثال"
+  // remains an open conversation; thanking the assistant is not itself consent.
+  const callerDone = /^(?:(?:لأ|لا)\s*)?(?:شكرا(?:\s+جزيلا)?(?:\s+مع\s+السلامة)?|مع\s+السلامة|كده\s+تمام|مش\s*محتاج\s*حاجة|خلاص\s+شكرا)[\s،,.!؟]*$/u.test(stripMarks(utterance).trim());
+  if (callerDone && session.intent === "inquiry" && session.state !== "CLOSING") {
+    outcomes.push(await executeTool(deps, session, "advance_state", { to: "CLOSING" }));
+  }
   if (
     session.state === "CLOSING" &&
-    /(?:لأ\s*شكرا|لا\s*شكرا|شكراً|شكرا\s*جزيلا|مع\s*السلامة|سلام|كده\s*تمام|مش\s*محتاج\s*حاجة)/u.test(stripMarks(utterance)) &&
+    callerDone &&
     !detectedIntent
   ) {
     const endOutcome = await executeTool(deps, session, "end_call", { reason: "caller_confirmed_done" });
@@ -1020,7 +1037,7 @@ export async function ingestCallerUtterance(
   // so side effects (D1 booking persistence + optional webhook) are deterministically executed before the LLM replies!
   let autoExecutedAction: ToolOutcome | undefined;
   const activeSpec = specOf(session, deps.intents);
-  if (session.state === "ACTION" && activeSpec?.action) {
+  if (!explanationOnly && session.state === "ACTION" && activeSpec?.action) {
     autoExecutedAction = await executeTool(deps, session, "perform_action", { action: activeSpec.action });
     outcomes.push(autoExecutedAction);
   }

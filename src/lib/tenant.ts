@@ -8,15 +8,17 @@
 //   4. Tenant Knowledge     — FAQ/schedules/prices (tenant can edit)
 // ============================================================================
 
-export const DEFAULT_MIZAN_VOICE_ID = "MX8opBj7bbi4G2cE9j2w";
+export const DEFAULT_MIZAN_VOICE_ID = "2DkHmQavK9V2UzTYrMYT";
 const LEGACY_VOICE_IDS = new Set([
+  "MX8opBj7bbi4G2cE9j2w",
   "SAz9YHcvj6GT2YYXdXww",
   "P2DK6Lg0vxyKGYj3QOik",
   "JBFqnCBsd6RMkjVDRZzb",
   "onwK4e9ZLuTAKqWW03F9"
 ]);
 
-function normalizeVoiceId(raw: unknown): string {
+function normalizeVoiceId(raw: unknown, override?: string): string {
+  if (override && /^[A-Za-z0-9_-]{8,128}$/.test(override.trim())) return override.trim();
   const trimmed = typeof raw === "string" ? raw.trim() : "";
   if (!trimmed || LEGACY_VOICE_IDS.has(trimmed) || !/^[A-Za-z0-9_-]{8,128}$/.test(trimmed)) {
     return DEFAULT_MIZAN_VOICE_ID;
@@ -57,14 +59,14 @@ const DEFAULT_INDUSTRY = "healthcare"; // Fail-safe default; matches migration-0
 // ---------------------------------------------------------------------------
 
 export async function getGlobalVoiceConfig(
-  env: { DB: D1Database; TENANT_CONFIG: KVNamespace }
+  env: { DB: D1Database; TENANT_CONFIG: KVNamespace; MIZAN_VOICE_ID?: string }
 ): Promise<GlobalVoiceConfig> {
   const cacheKey = "global:voice_config";
   const cached = await env.TENANT_CONFIG.get(cacheKey, "json") as GlobalVoiceConfig | null;
   if (cached) {
     return {
       system_prompt: cached.system_prompt || "أنت ميزان، المساعد الصوتي المصري العام.",
-      voice_id: normalizeVoiceId(cached.voice_id),
+      voice_id: normalizeVoiceId(cached.voice_id, env.MIZAN_VOICE_ID),
     };
   }
 
@@ -75,13 +77,13 @@ export async function getGlobalVoiceConfig(
   if (!row) {
     return {
       system_prompt: "أنت ميزان، المساعد الصوتي المصري العام.",
-      voice_id: DEFAULT_MIZAN_VOICE_ID,
+      voice_id: normalizeVoiceId(null, env.MIZAN_VOICE_ID),
     };
   }
 
   const normalized: GlobalVoiceConfig = {
     system_prompt: row.system_prompt || "أنت ميزان، المساعد الصوتي المصري العام.",
-    voice_id: normalizeVoiceId(row.voice_id),
+    voice_id: normalizeVoiceId(row.voice_id, env.MIZAN_VOICE_ID),
   };
 
   await env.TENANT_CONFIG.put(cacheKey, JSON.stringify(normalized), { expirationTtl: 300 });
@@ -105,7 +107,7 @@ export interface HQElevenLabsConfig {
  * Deliberately does not read the public-page localStorage voice or tenant defaults.
  */
 export async function getHQElevenLabsConfig(
-  env: { DB: D1Database }
+  env: { DB: D1Database; MIZAN_VOICE_ID?: string }
 ): Promise<HQElevenLabsConfig | null> {
   try {
     const row = await env.DB.prepare(
@@ -113,7 +115,7 @@ export async function getHQElevenLabsConfig(
     ).first<{ html: string }>();
     if (!row?.html) {
       return {
-        voice_id: DEFAULT_MIZAN_VOICE_ID,
+        voice_id: normalizeVoiceId(null, env.MIZAN_VOICE_ID),
         model_id: "eleven_v4_turbo",
         stability: 0.4,
         similarity_boost: 0.9,
@@ -122,7 +124,7 @@ export async function getHQElevenLabsConfig(
     }
 
     const saved = JSON.parse(row.html) as Record<string, unknown>;
-    const voiceId = normalizeVoiceId(saved.voice_id);
+    const voiceId = normalizeVoiceId(saved.voice_id, env.MIZAN_VOICE_ID);
 
     const numeric = (value: unknown, fallback: number, min: number, max: number) => {
       const number = Number(value);
@@ -139,7 +141,7 @@ export async function getHQElevenLabsConfig(
   } catch (error) {
     console.error("HQ ElevenLabs configuration could not be loaded:", error);
     return {
-      voice_id: DEFAULT_MIZAN_VOICE_ID,
+      voice_id: normalizeVoiceId(null, env.MIZAN_VOICE_ID),
       model_id: "eleven_v4_turbo",
       stability: 0.4,
       similarity_boost: 0.9,
@@ -283,14 +285,16 @@ export async function getTenantKnowledge(
   env: { DB: D1Database }
 ): Promise<Record<string, string>> {
   const rows = await env.DB.prepare(
-    `SELECT category, faq_text FROM tenant_knowledge WHERE tenant_slug = ?`
+    `SELECT category, faq_text FROM tenant_knowledge WHERE tenant_slug = ? ORDER BY category, updated_at, id`
   )
     .bind(slug)
     .all<{ category: string; faq_text: string }>();
 
-  const knowledge: Record<string, string> = {};
+  const knowledge: Record<string, string> = Object.create(null);
   for (const row of rows.results) {
-    knowledge[row.category] = row.faq_text;
+    knowledge[row.category] = knowledge[row.category]
+      ? `${knowledge[row.category]}\n${row.faq_text}`
+      : row.faq_text;
   }
   return knowledge;
 }

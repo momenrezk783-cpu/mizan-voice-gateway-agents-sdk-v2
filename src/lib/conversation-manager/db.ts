@@ -552,7 +552,9 @@ export async function executeTenantBusinessAction(opts: {
       }
       if (action === "book_appointment") {
         const receipt = await res.json().catch(() => null);
-        providerConfirmed = receipt?.confirmed === true && typeof receipt.confirmation_id === "string" && receipt.confirmation_id.length > 0;
+        providerConfirmed = Boolean(receipt && typeof receipt === "object" &&
+          "confirmed" in receipt && receipt.confirmed === true &&
+          "confirmation_id" in receipt && typeof receipt.confirmation_id === "string" && receipt.confirmation_id.length > 0);
       }
     } catch {
       return action === "book_appointment"

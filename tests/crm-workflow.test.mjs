@@ -11,7 +11,7 @@ assert.equal(lib.isRequestStatus('super_admin'),false);
 assert.equal(lib.isRequestStatus('__proto__'),false);
 const api=readFileSync('src/index.ts','utf8');
 assert.match(api, /updateTenantRequestStatus\(env\.DB, slug, requestStatusMatch\[1\], body\.status\)/);
-assert.match(api, /listTenantRequests\(env\.DB, slug, filter \|\| undefined\)/);
+assert.match(api, /listTenantRequests\(env\.DB, slug, isRequestStatus\(filter\) \? filter : undefined\)/);
 const sql=source.match(/`(UPDATE client_queries SET status = \?, updated_at = \?[\s\S]*?)`/)[1];
 const python=`import sqlite3,sys
 c=sqlite3.connect(':memory:')

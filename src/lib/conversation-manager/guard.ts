@@ -78,7 +78,9 @@ const NON_NAME_WORDS = new Set([
   "في", "من", "على", "عن", "العيادة", "الشركة", "المكتب", "معاك", "معاكي",
   "عايز", "عايزة", "عاوز", "عاوزة", "محتاج", "محتاجة", "بحجز", "احجز",
   "أحجز", "اكتبهم", "أكتبهم", "اقولهم", "أقولهم", "سامعني", "سامعاني",
-  "الو", "آلو", "ألو", "ايوه", "أيوه", "تمام", "ماشي", "طيب", "شكرا", "شكراً"
+  "الو", "آلو", "ألو", "ايوه", "أيوه", "تمام", "ماشي", "طيب", "شكرا", "شكراً",
+  "عندي", "عندنا", "شغال", "شغالة", "موجود", "موجودة", "كويس", "كويسة",
+  "مش", "بس", "كنت", "عاوزه", "هنا", "بقول", "بكلمك", "حابب", "حابة", "اسمي", "إسمي"
 ]);
 
 export function isProceduralPhrase(text: string): boolean {
@@ -115,7 +117,8 @@ function inferGender(title: string | null, fallback: CallerGender = "unknown"): 
 
 export function extractCallerTitleAndName(
   utterance: string,
-  existing: PersonTitleContext = {}
+  existing: PersonTitleContext = {},
+  nameRequested = false
 ): { title: string | null; name: string | null; gender: CallerGender } {
   const result = {
     title: existing.callerTitle ?? null,
@@ -123,7 +126,7 @@ export function extractCallerTitleAndName(
     gender: existing.callerGender ?? ("unknown" as CallerGender)
   };
   const text = stripMarks(String(utterance ?? "")).trim();
-  if (!text || isProceduralPhrase(text)) return result;
+  if (!text) return result;
 
   // Detect explicit gender markers in caller self-reference
   if (result.gender === "unknown") {
@@ -144,20 +147,26 @@ export function extractCallerTitleAndName(
     const first = titleMatch[2]?.replace(/[،,.\s!?؟]+/gu, "") || null;
     if (title) result.title = title;
     if (first && !NON_NAME_WORDS.has(first)) {
-      result.name ||= first;
+      result.name = first;
     }
     result.gender = inferGender(result.title, result.gender);
     return result;
   }
 
-  // Also extract plain self-introductions without a professional title (e.g. "اسمي شريف سعيد" or "أنا أحمد محمود")
-  const nameMatch = text.match(
-    /(?:^|\s)(?:اسمي|إسمي|أنا\s+اسمي|انا\s+اسمي)\s+([\u0621-\u064A]{2,18})(?:\s+([\u0621-\u064A]{2,18}))?/u
-  );
+  // Explicit introductions and corrections replace an earlier name. A bare
+  // response is identity only after the assistant actually requested a name.
+  const nameMatch = text.match(/(?:^|\s)(?:أنا\s+اسمي|انا\s+اسمي|اسمي|إسمي)\s+([\u0621-\u064A]{2,18})/u)
+    ?? text.match(/(?:^|\s)(?:أنا|انا|معاك|معاكي)\s+([\u0621-\u064A]{2,18})/u);
   if (nameMatch) {
     const first = nameMatch[1]?.replace(/[،,.\s!?؟]+/gu, "") || null;
     if (first && !NON_NAME_WORDS.has(first)) {
-      result.name ||= first;
+      result.name = first;
+    }
+  } else if (nameRequested && !isProceduralPhrase(text)) {
+    const bare = text.replace(/[،,.!]+$/gu, "").trim();
+    const words = bare.split(/\s+/u);
+    if (words.length <= 3 && words.every(word => /^[\u0621-\u064A]{2,18}$/u.test(word) && !NON_NAME_WORDS.has(word))) {
+      result.name = words[0];
     }
   }
 
@@ -339,6 +348,7 @@ export function guardUnconfirmedActionClaim(
     hasValidPhone: boolean;
     awaitingConfirmationLabels?: string[];
     missingSlotLabels?: string[];
+    informational?: boolean;
   }
 ): { text: string; blockedClaim: boolean } {
   const cleaned = String(speech ?? "").trim();
@@ -348,10 +358,20 @@ export function guardUnconfirmedActionClaim(
   }
 
   const falseCompletionPattern =
-    /(?:تم\s+(?:تسجيل|تأكيد|حجز)|اتسجل(?:ت|ك)?|اتحجز(?:لك|ت)?|سجلتلك\s+الحجز|أكدت\s+الحجز|الحجز\s+اتأكد)/u;
+    /(?:تم\s+(?:تسجيل|تأكيد|حجز)|اتسجل(?:ت|ك)?|اتحجز(?:لك|ت)?|(?:سجلت|حجزت|أكدت)لك|أكدت\s+الحجز|الحجز\s+اتأكد)/u;
 
   if (!falseCompletionPattern.test(cleaned)) {
     return { text: cleaned, blockedClaim: false };
+  }
+
+  if (opts.informational) {
+    // Explaining a hypothetical workflow is not a request for the listener's
+    // phone number. Still block an unqualified claim that we performed an action.
+    const hypothetical = /(?:مثال|مثلا|سيناريو|افترض|لو\s)/u.test(cleaned);
+    const callerSpecificClaim = /(?:تم\s+(?:تسجيل|تأكيد|حجز)\s+(?:طلبك|موعدك|حجزك|شكواك)|(?:سجلت|حجزت|أكدت)\s*(?:لك|طلبك|حجزك)|(?:طلبك|حجزك|موعدك|شكواك)\s+(?:اتسجل|اتأكد|اتحجز)|اتحجزلك|اتسجل(?:ت|ك)?\s+(?:طلبك|حجزك|شكواك))/u.test(cleaned);
+    return hypothetical || !callerSpecificClaim
+      ? { text: cleaned, blockedClaim: false }
+      : { text: "للتوضيح، مفيش طلب اتنفذ في المكالمة دي.", blockedClaim: true };
   }
 
   if (!opts.hasValidPhone) {

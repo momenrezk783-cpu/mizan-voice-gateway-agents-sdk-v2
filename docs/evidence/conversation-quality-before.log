@@ -1,0 +1,52 @@
+FAIL natural introductions, requested short names and explicit corrections persist: Expected values to be strictly equal:
+
+null !== 'مؤمن'
+
+FAIL hypothetical action examples do not trigger requests for a phone number: Expected values to be strictly equal:
++ actual - expected
+
++ 'عشان أسجل الطلب بشكل صحيح، محتاج رقم الموبايل المكون من حداشر رقم الأول.'
+- 'مثال: لو عميل طلب موعد، الطلب اتسجل في لوحة المتابعة ولسه محتاج تأكيد المنشأة.'
+
+FAIL product examples do not become booking, complaint or callback requests: اديني مثال على حجز موعد لمكتب محاماة
++ actual - expected
+
++ 'book_appointment'
+- 'inquiry'
+
+FAIL extended inquiries neither stall nor force closing or contact collection: The input was expected to not match the regular expression /STALLED|advance_state\(CLOSING\)/. Input:
+
+'<live_state>\n' +
+  'TODAY: 2026-11-11 (الأربعاء) · LOCAL_TIME: ١١:٠٠ ص Africa/Cairo\n' +
+  'CURRENT_STATE: ACTION\n' +
+  'OBJECTIVE: Execute the request: acknowledge briefly → perform_action → explain the real outcome with details needed by the caller.\n' +
+  'INTENT: inquiry\n' +
+  'ACTION: none — answer from <business_knowledge>, then advance_state(CLOSING)\n' +
+  'TURNS_IN_STATE: 14 (soft limit 4)\n' +
+  'STALLED: too long in this state. Change approach NOW — name the blocker, offer a human callback (intent callback_request) or transfer_to_human.\n' +
+  '</live_state>'
+
+FAIL dates and phone numbers in an explanation cannot overwrite a live request: Expected values to be strictly equal:
++ actual - expected
+
++ '2026-12-20'
+- '2026-11-12'
+         ^
+
+FAIL all FAQ entries in a shared category reach the context: The input did not match the regular expression /الخدمة الأولى/. Input:
+
+'الخدمة الثانية'
+
+FAIL requested voice overrides stale global KV and HQ saved voice: Expected values to be strictly equal:
++ actual - expected
+
++ 'MX8opBj7bbi4G2cE9j2w'
+- '2DkHmQavK9V2UzTYrMYT'
+
+FAIL actual agent retains early turns and identity without a response token cap: Expected values to be strictly equal:
++ actual - expected
+
++ 'اديني مثال مختلف رقم 6'
+- 'أنا مؤمن وعايز أعرف خدمات ميزان'
+
+Conversation quality: 0 passed, 8 failed; mocked services, no live model or TTS call.

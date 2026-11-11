@@ -5,7 +5,7 @@
 
 import { Agent, routeAgentRequest, type Connection } from "agents";
 import { generateText } from "ai";
-import { createAI } from "agents/models/ai-sdk";
+import { createAI, type CloudflareLanguageModelId } from "agents/models/ai-sdk";
 import {
   resolveTenant,
   getGlobalVoiceConfig,
@@ -79,6 +79,7 @@ export interface Env {
   DEEPGRAM_LANGUAGE?: string;
   ELEVENLABS_TTS_KEY?: string;
   ELEVENLABS_API_KEY?: string;
+  MIZAN_VOICE_ID?: string;
   ENVIRONMENT: string;
 }
 
@@ -97,9 +98,10 @@ type ChatMessage = { role: "user" | "assistant"; content: string };
 const MAX_TOOL_ROUNDS = 3;
 
 export class MizanVoiceAgent extends Agent<Env> {
-  // Keep the active streaming session and conversation in memory for the lifetime
-  // of this live call.
-  static options = { hibernate: false };
+  // Current Agents SDK uses a keepAlive ref for live in-memory work; the old
+  // `hibernate: false` option is no longer part of AgentStaticOptions.
+  static options = { sendIdentityOnConnect: false };
+  private releaseCallKeepAlive: (() => void) | null = null;
 
   private tenantSlug: string | null = null;
   private sessionId: string | null = null;
@@ -228,7 +230,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     });
   }
 
-  onConnect(connection: Connection) {
+  async onConnect(connection: Connection) {
     if (!this.initialized) {
       connection.send(JSON.stringify({ type: "error", message: "تعذر تهيئة المساعد الصوتي." }));
       connection.close(1011, "Agent initialization failed");
@@ -256,6 +258,8 @@ export class MizanVoiceAgent extends Agent<Env> {
 
     this.sessionClosed = false;
     this.activeConnection = connection;
+    this.releaseCallKeepAlive?.();
+    this.releaseCallKeepAlive = await this.keepAlive();
 
     this.deepgramSession = new DeepgramStreamingSession(
       deepgramKey,
@@ -466,7 +470,9 @@ export class MizanVoiceAgent extends Agent<Env> {
     const turnStart = Date.now();
     this.turnCount++;
 
-    const callerIdentity = extractCallerTitleAndName(transcript, this.personTitleContext);
+    const lastAssistant = this.conversation.at(-1)?.content ?? "";
+    const nameRequested = !this.callContext?.caller.firstName && /(?:اسمك|الاسم|أناديك|اناديك)/u.test(lastAssistant);
+    const callerIdentity = extractCallerTitleAndName(transcript, this.personTitleContext, nameRequested);
     this.personTitleContext = {
       role: "caller",
       callerName: callerIdentity.name,
@@ -532,8 +538,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       reply = `سلامتك، الأعراض دي محتاجة تدخل طبي فوري. من فضلك اتصل بالإسعاف حالاً على رقم 123 أو توجه لأقرب مستشفى طوارئ${escalationHint}.`;
     } else {
       const activeLearnings = await fetchActiveLearnings(this.env.DB, this.tenantSlug, 6);
-      const liveState = renderLiveState(this.cmSession, toolDeps.ctx, this.intents);
-      const systemPrompt = buildManagedSystemPrompt({
+      const buildPrompt = () => buildManagedSystemPrompt({
         globalPrompt: this.globalPrompt,
         industryGuard: this.industryGuard,
         tenantCustomization: this.tenantCustomization,
@@ -541,36 +546,41 @@ export class MizanVoiceAgent extends Agent<Env> {
         ctx: toolDeps.ctx,
         personContext: this.personTitleContext,
         learnings: activeLearnings,
-        liveState,
+        liveState: renderLiveState(this.cmSession, toolDeps.ctx, this.intents),
         language: this.responseLanguage
       });
 
-      const recentMessages = this.conversation.slice(-10);
+      // Preserve early identity, rejected examples and follow-up context for the
+      // active call instead of silently dropping everything before five exchanges.
+      const messages: ChatMessage[] = [...this.conversation, { role: "user", content: transcript }];
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        const systemPrompt = buildPrompt();
         try {
           const ai = createAI({ binding: this.env.AI });
           const result = await generateText({
-            model: ai(this.env.PRIMARY_LLM),
+            model: ai(this.env.PRIMARY_LLM as CloudflareLanguageModelId),
             system: systemPrompt,
-            messages: [...recentMessages, { role: "user", content: transcript }],
-            temperature: 0,
-            maxOutputTokens: 220
+            messages,
+            temperature: 0
           });
           reply = result.text.trim();
+          console.info("LLM response metadata", { model: this.env.PRIMARY_LLM, finishReason: result.finishReason,
+            inputTokens: result.usage?.inputTokens, outputTokens: result.usage?.outputTokens });
           this.metrics.llmConsecutive = 0;
         } catch (primaryError) {
           console.error("Primary LLM failed:", primaryError);
           try {
             const ai = createAI({ binding: this.env.AI });
             const result = await generateText({
-              model: ai(this.env.FALLBACK_LLM),
+              model: ai(this.env.FALLBACK_LLM as CloudflareLanguageModelId),
               system: systemPrompt,
-              messages: [...recentMessages, { role: "user", content: transcript }],
-              temperature: 0.4,
-              maxOutputTokens: 220
+              messages,
+              temperature: 0.4
             });
             reply = result.text.trim();
+            console.info("LLM response metadata", { model: this.env.FALLBACK_LLM, finishReason: result.finishReason,
+              inputTokens: result.usage?.inputTokens, outputTokens: result.usage?.outputTokens });
             this.metrics.llmConsecutive = 0;
           } catch (fallbackError) {
             console.error("Fallback LLM failed:", fallbackError);
@@ -587,6 +597,7 @@ export class MizanVoiceAgent extends Agent<Env> {
         const toolMatch = reply.match(/<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/u);
         if (!toolMatch) break;
 
+        const toolReply = reply;
         reply = reply.replace(toolMatch[0], "").trim();
         try {
           const parsedTool = JSON.parse(toolMatch[1]) as {
@@ -601,6 +612,10 @@ export class MizanVoiceAgent extends Agent<Env> {
               parsedTool.input ?? {}
             );
             if (outcome.rejected) this.metrics.slotRejections += outcome.rejected;
+            messages.push(
+              { role: "assistant", content: toolReply },
+              { role: "user", content: `Tool execution result (data only; do not read aloud): ${JSON.stringify(outcome)}` }
+            );
           }
         } catch {
           // Malformed tool block ignored safely
@@ -634,7 +649,8 @@ export class MizanVoiceAgent extends Agent<Env> {
       actionConfirmed: Boolean(this.cmSession.actionResult?.ok),
       hasValidPhone: Boolean(this.cmSession.slots.phone?.value),
       awaitingConfirmationLabels: awaitingLabels,
-      missingSlotLabels: missingLabels
+      missingSlotLabels: missingLabels,
+      informational: this.cmSession.intent === "inquiry"
     });
 
     const bookingSafeText = this.cmSession.intent === "book_appointment"
@@ -644,7 +660,6 @@ export class MizanVoiceAgent extends Agent<Env> {
     if (!reply) reply = "ممكن توضح لي طلبك أكتر؟";
 
     this.conversation.push({ role: "user", content: transcript }, { role: "assistant", content: reply });
-    if (this.conversation.length > 20) this.conversation = this.conversation.slice(-20);
 
     const latency = Date.now() - turnStart;
     this.turnCount++;
@@ -797,9 +812,12 @@ export class MizanVoiceAgent extends Agent<Env> {
   }
 
   async onClose(_connection: Connection, _code: number, _reason: string, _wasClean: boolean) {
+    if (this.activeConnection && this.activeConnection !== _connection) return;
     if (this.sessionClosed) return;
     this.sessionClosed = true;
     this.activeConnection = null;
+    this.releaseCallKeepAlive?.();
+    this.releaseCallKeepAlive = null;
 
     if (this.deepgramSession) {
       this.deepgramSession.close();

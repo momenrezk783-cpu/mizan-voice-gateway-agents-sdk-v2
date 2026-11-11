@@ -25,6 +25,7 @@ routes = [
 
 [vars]
 ENVIRONMENT = "production"
+MIZAN_VOICE_ID = "2DkHmQavK9V2UzTYrMYT"
 VOICE_WS_BASE = "wss://voice.mizanconsult.com"
 PRIMARY_LLM = "@cf/daily-co/phonellm-mini-alpha-2"
 FALLBACK_LLM = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"

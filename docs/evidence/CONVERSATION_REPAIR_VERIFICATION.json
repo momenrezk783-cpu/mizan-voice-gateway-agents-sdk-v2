@@ -1,0 +1,33 @@
+{
+  "baseline_commit": "c4494be6b66ce9a5addd3ad1d47697275a9f3a9a",
+  "branch": "fix/conversation-memory-and-requested-voice",
+  "checked_at_utc": "2026-11-11T01:28:09.327077+00:00",
+  "node": "v24.22.1",
+  "checks": [
+    {
+      "command": "npm test",
+      "exit_code": 0,
+      "log": "docs/evidence/conversation-repair-tests.log"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "log": "docs/evidence/conversation-repair-typecheck.log"
+    },
+    {
+      "command": "npm run bundle:check",
+      "exit_code": 0,
+      "log": "docs/evidence/conversation-repair-bundle.log"
+    }
+  ],
+  "live_provider_calls": false,
+  "production_deployment": false,
+  "database_migrations": false,
+  "new_regressions": {
+    "baseline_passed": 0,
+    "baseline_failed": 8,
+    "repaired_passed": 8,
+    "repaired_failed": 0
+  },
+  "tests_include_primary_and_fallback_paths": true
+}

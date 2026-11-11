@@ -12,7 +12,7 @@
 // ============================================================================
 
 import { MizanVoiceAgent, routeAgentRequest } from "./agent";
-import { resolveTenant, resolveTenantByDomain, getTenantKnowledge, invalidateTenantCache, invalidateGlobalCache } from "./lib/tenant";
+import { resolveTenant, resolveTenantByDomain, getTenantKnowledge, invalidateTenantCache, invalidateGlobalCache, DEFAULT_MIZAN_VOICE_ID } from "./lib/tenant";
 import { getSessionUser, createSessionResponse, clearSessionCookie, canAccessTenant, hashPassword, verifyPassword } from "./lib/auth";
 import { encryptPII, decryptPII, redactPII } from "./lib/crypto";
 import { EMBEDDED_UI_ASSETS } from "./lib/ui-assets";
@@ -38,6 +38,7 @@ interface Env {
   ADMIN_PASSKEY_HASH: string;
   DEEPGRAM_API_KEY?: string;
   ELEVENLABS_TTS_KEY?: string;
+  MIZAN_VOICE_ID?: string;
   VOICE_WS_BASE: string;
   PRIMARY_LLM: string;
   FALLBACK_LLM: string;
@@ -234,7 +235,7 @@ async function handleVoiceWebSocket(
 
   // routeAgentRequest handles DO instantiation + WebSocket upgrade
   // It auto-maps the MIZAN_VOICE_AGENT binding to /agents/mizan-voice-agent/{name}
-  return routeAgentRequest(agentRequest, env) ?? new Response("Agent not found", { status: 404 });
+  return (await routeAgentRequest(agentRequest, env)) ?? new Response("Agent not found", { status: 404 });
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +371,7 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   if (path === "/api/client/requests" && request.method === "GET") {
     const filter = url.searchParams.get("status");
     if (filter && !isRequestStatus(filter)) return json({ error: "Invalid request status" }, 400);
-    return json({ requests: await listTenantRequests(env.DB, slug, filter || undefined) });
+    return json({ requests: await listTenantRequests(env.DB, slug, isRequestStatus(filter) ? filter : undefined) });
   }
 
   const requestStatusMatch = path.match(/^\/api\/client\/requests\/([a-zA-Z0-9_-]{1,96})\/status$/);
@@ -464,7 +465,7 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   // GET /api/client/voice-config
   if (path === "/api/client/voice-config" && request.method === "GET") {
     const config = await env.DB.prepare(
-      `SELECT system_prompt, voice_id, allow_medical_advice, escalation_phone, ttl_seconds
+      `SELECT system_prompt, tenant_customization, voice_id, allow_medical_advice, escalation_phone, ttl_seconds
        FROM tenant_voice_config WHERE tenant_slug = ?`
     ).bind(slug).first();
     return json({ config });
@@ -619,7 +620,7 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
         body.theme_color ?? "#1BA6B8", body.logo_url ?? null
       ),
       env.DB.prepare(`INSERT INTO tenant_voice_config (tenant_slug, system_prompt, voice_id)
-        VALUES (?, ?, ?)`).bind(body.slug, body.system_prompt, body.voice_id ?? "MX8opBj7bbi4G2cE9j2w")
+        VALUES (?, ?, ?)`).bind(body.slug, body.system_prompt, body.voice_id ?? DEFAULT_MIZAN_VOICE_ID)
     ]);
 
     return json({ ok: true, tenantId }, 201);
@@ -985,7 +986,8 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
           ws.send(e.data);
         };
         s.textContent='جاري الاتصال بالمساعد...';
-        const socket=new WebSocket(WS_BASE+'/agents/mizan-voice-agent/'+TENANT_SLUG+'?session_id='+SESSION_ID);
+        const callSessionId=crypto.randomUUID();
+        const socket=new WebSocket(WS_BASE+'/agents/mizan-voice-agent/'+TENANT_SLUG+'?session_id='+callSessionId);
         ws=socket;
         socket.binaryType='arraybuffer';
         socket.onopen=()=>{

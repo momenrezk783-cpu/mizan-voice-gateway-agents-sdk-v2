@@ -1,0 +1,30 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> mizan-voice-gateway@2.0.0 bundle:check
+> node scripts/check-local-bundle.mjs
+
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mProxy environment variables detected. We'll use your proxy for fetch requests.[0m
+
+
+
+ ⛅️ wrangler 4.160.0
+────────────────────
+✨ Read 14 files from the assets directory /workspace/scratch/701b2dc12d9a/current-github-review/public
+Total Upload: 3511.91 KiB / gzip: 660.82 KiB
+Your Worker has access to the following bindings:
+Binding                                                                 Resource                      
+env.MIZAN_VOICE_AGENT (MizanVoiceAgent)                                 Durable Object                
+env.TENANT_CONFIG (00000000000000000000000000000001)                    KV Namespace                  
+env.BACKGROUND_QUEUE (mizan-local-fixture-staging)                      Queue                         
+env.DB (mizan-local-fixture-staging)                                    D1 Database                   
+env.VOICE_METRICS (mizan_local_fixture_staging)                         Analytics Engine Dataset      
+env.AI                                                                  AI                            
+env.ASSETS                                                              Assets                        
+env.ENVIRONMENT ("staging")                                             Environment Variable          
+env.MIZAN_VOICE_ID ("2DkHmQavK9V2UzTYrMYT")                             Environment Variable          
+env.VOICE_WS_BASE ("wss://mizan-local-bundle-staging.exam...")          Environment Variable          
+env.PRIMARY_LLM ("@cf/daily-co/phonellm-mini-alpha-2")                  Environment Variable          
+env.FALLBACK_LLM ("@cf/deepseek-ai/deepseek-v4.1-flash-1...")           Environment Variable          
+
+--dry-run: exiting now.
+PASS: local bundle only; no resources provisioned or deployment performed.

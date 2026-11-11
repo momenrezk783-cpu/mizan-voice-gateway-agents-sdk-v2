@@ -1,5 +1,6 @@
 # Prevent accidental recording of credentials, local installs, or test artifacts
 node_modules/
+node_modules
 .env
 .env.*
 !.env.example

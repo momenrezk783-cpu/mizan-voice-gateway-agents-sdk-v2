@@ -384,8 +384,9 @@ class MockDeepgramSocket {
   assert.ok(!agentSource.includes("whisper-large-v3-turbo"), "Whisper STT must be removed from src/agent.ts");
   assert.ok(agentSource.includes("DeepgramStreamingSession"), "DeepgramStreamingSession must be integrated in src/agent.ts");
   assert.ok(agentSource.includes("eleven_v4_turbo"), "ElevenLabs model_id eleven_v4_turbo must be preserved");
-  assert.ok(tenantSource.includes("MX8opBj7bbi4G2cE9j2w"), "ElevenLabs voice ID MX8opBj7bbi4G2cE9j2w must be preserved in src/lib/tenant.ts");
-  assert.ok(indexSource.includes("MX8opBj7bbi4G2cE9j2w"), "ElevenLabs voice ID MX8opBj7bbi4G2cE9j2w must be preserved in src/index.ts");
+  const { DEFAULT_MIZAN_VOICE_ID } = await loadTsModule("src/lib/tenant.ts");
+  assert.equal(DEFAULT_MIZAN_VOICE_ID, "2DkHmQavK9V2UzTYrMYT", "Use the owner's selected ElevenLabs voice");
+  assert.ok(indexSource.includes("body.voice_id ?? DEFAULT_MIZAN_VOICE_ID"), "New tenants use the central voice default");
   assert.ok(!indexSource.includes("audioNode.connect(audioCtx.destination)"), "Mic-to-speaker loopback must be removed from src/index.ts");
 
   // Verify Egyptian Arabic caller title extraction and banned-word speech sanitization still work
@@ -403,7 +404,7 @@ class MockDeepgramSocket {
   assert.ok(!sanitized.includes("فندم") && !sanitized.includes("حضرتك"), "Banned formal words must be sanitized");
   assert.ok(sanitized.includes("يا دكتور محمد"), "Caller title and first name must be preserved");
 
-  console.log("[PASS] 4. Integration preservation (ElevenLabs MX8opBj7bbi4G2cE9j2w, tenant config, conversation guard) verified");
+  console.log("[PASS] 4. Requested ElevenLabs voice, tenant config and conversation guard verified");
 }
 
 // ---------------------------------------------------------------------------

@@ -525,11 +525,7 @@ export class DeepgramStreamingSession {
 
     if (this.ws && this.ws.readyState === 1) {
       try {
-        this.ws.send(
-          pcmBytes.byteOffset === 0 && pcmBytes.byteLength === pcmBytes.buffer.byteLength
-            ? pcmBytes.buffer
-            : pcmBytes.slice().buffer
-        );
+        this.ws.send(pcmBytes);
         return true;
       } catch (err) {
         console.error("Deepgram audio send failed:", err);
@@ -577,7 +573,7 @@ export class DeepgramStreamingSession {
     this.pendingAudioBytes = 0;
     for (let i = 0; i < queued.length; i++) {
       try {
-        this.ws.send(queued[i].buffer);
+        this.ws.send(queued[i]);
       } catch {
         // Keep the unsent suffix. Previously all buffered speech was lost here.
         this.pendingAudioQueue = queued.slice(i);
