@@ -69,5 +69,5 @@ ALTER TABLE call_sessions ADD COLUMN evaluation_score INTEGER;
 ALTER TABLE call_sessions ADD COLUMN summary_ar TEXT;
 
 -- 5. Update Global & Tenant Default ElevenLabs Voice ID
-UPDATE global_voice_config SET voice_id = 'MX8opBj7bbi4G2cE9j2w' WHERE id = 1;
-UPDATE tenant_voice_config SET voice_id = 'MX8opBj7bbi4G2cE9j2w';
+UPDATE global_voice_config SET voice_id = '2DkHmQavK9V2UzTYrMYT' WHERE id = 1;
+UPDATE tenant_voice_config SET voice_id = '2DkHmQavK9V2UzTYrMYT';

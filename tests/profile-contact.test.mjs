@@ -57,7 +57,7 @@ try {
   assert.equal((await worker.fetch(request('/api/admin/quote-requests/'+crypto.randomUUID(),'PATCH',{status:'closed'},{Cookie:adminCookie}),env,ctx)).status,404);
   console.log('PASS encrypted quote intake, retries, consent, validation, atomic rate limits and super-admin-only review');
 
-  for(const route of ['/','/about','/privacy','/terms']){const page=await worker.fetch(request(route),env,ctx);assert.equal(page.status,200);const html=await page.text();assert.ok(html.includes('Mizan Consult'));assert.ok(html.includes('نشاط مستقل'));assert.ok(!html.includes('امتثال كامل'));}
+  for(const route of ['/','/about','/privacy','/terms']){const page=await worker.fetch(request(route),env,ctx);assert.equal(page.status,200);const html=await page.text();assert.ok(html.includes('Mizan Consult'));assert.ok(html.includes('مؤسسة ميزان (تحت التأسيس)'));assert.ok(!html.includes('امتثال كامل'));}
   const embedded=await worker.fetch(request('/c/tenant-a/embed'),env,ctx);
   assert.equal(embedded.status,200);assert.equal(embedded.headers.get('X-Frame-Options'),null);
   assert.match(embedded.headers.get('Content-Security-Policy'),/frame-ancestors https:\/\/example.test https:\/\/customer.example/);

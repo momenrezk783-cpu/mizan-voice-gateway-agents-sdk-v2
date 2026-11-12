@@ -1,6 +1,6 @@
 /** Approved public identity. No internal pricing or client data belongs here. */
 export const MIZAN_PROFILE = {
-  name: 'Mizan Consult', owner: 'مؤمن رزق', status: 'نشاط مستقل يُدار باسم مؤمن رزق',
+  name: 'Mizan Consult', status: 'مؤسسة ميزان (تحت التأسيس)',
   email: 'info@mizanconsult.com', phone: '+201282166096', phoneDisplay: '+20 128 216 6096',
   website: 'https://mizanconsult.com', city: 'الإسكندرية', country: 'مصر', updated: '2026-11-12',
   quotePromise: 'طلب عرض السعر مجاني. سنراجع احتياجاتك ونتواصل معك في أسرع وقت ممكن، دون التزام بالتعاقد بمجرد تقديم الطلب.',
@@ -22,7 +22,8 @@ export const MIZAN_PROFILE = {
 
 export const MIZAN_HQ_FACTS = [
   `${MIZAN_PROFILE.name}: ${MIZAN_PROFILE.status}، في ${MIZAN_PROFILE.city}، ${MIZAN_PROFILE.country}.`,
-  'الصفة الحالية نشاط مستقل لحين استكمال تأسيس كيان قانوني مستقل؛ لا تدّع تسجيل شركة أو ترخيصًا أو اعتمادًا غير موثق.',
+  'الصفة الحالية مؤسسة تحت التأسيس؛ لا تدّع تسجيل شركة أو ترخيصًا أو اعتمادًا غير موثق.',
+  'استخدم الهوية المؤسسية المعلنة فقط: مؤسسة ميزان (تحت التأسيس). لا تخمن أسماء مؤسسين أو مالكين ولا تنسب المؤسسة إلى أشخاص.',
   ...MIZAN_PROFILE.services.map(([name,description])=>`${name}: ${description}`),
   'الباقات: Mizan Voice بداية، Mizan Voice نمو، Mizan Voice Private، Mizan Coding & AI Engineering.',
   'لا توجد أسعار عامة ثابتة؛ عرض السعر مجاني حسب احتياجات المنشأة، والرد في أسرع وقت ممكن دون وعد بمدة محددة. لا تخترع أسعارًا أو حدود دقائق أو خصومات.',

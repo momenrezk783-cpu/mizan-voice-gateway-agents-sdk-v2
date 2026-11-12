@@ -3,7 +3,7 @@ import fs from "node:fs";
 import ts from "typescript";
 const code = ts.transpile(fs.readFileSync(new URL("../src/lib/elevenlabs-tts.ts", import.meta.url), "utf8"),{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext});
 const { synthesizeDialogueAudio } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
-const config = { voice_id: "MX8opBj7bbi4G2cE9j2w", model_id: "eleven_v4_turbo", stability: 0.4, speed: 0.9, similarity_boost: 0.9 };
+const config = { voice_id: "2DkHmQavK9V2UzTYrMYT", model_id: "eleven_v4_turbo", stability: 0.5, speed: 1.0, similarity_boost: 0.75 };
 class Socket {
   listeners = new Map();
   sent = [];
@@ -38,7 +38,7 @@ const fetcher = async (url, options) => {
 const audio = await synthesizeDialogueAudio("أهلاً بيك", "test-key", config, "ar", fetcher);
 assert.deepEqual(Buffer.from(audio), Buffer.concat([chunk1, chunk2]));
 assert.deepEqual(socket.sent, [
-  { voices: [config.voice_id], voice_settings: { stability: 0.4 } },
+  { voices: [config.voice_id], voice_settings: { stability: 0.5 } },
   { inputs: [{ text: "أهلاً بيك", voice_id: config.voice_id }], close_socket: true }
 ]);
 assert.ok(socket.closed && socket.accepted);

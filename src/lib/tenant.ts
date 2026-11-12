@@ -8,7 +8,10 @@
 //   4. Tenant Knowledge     — FAQ/schedules/prices (tenant can edit)
 // ============================================================================
 
+import {MIZAN_PROFILE} from './mizan-profile';
+
 export const DEFAULT_MIZAN_VOICE_ID = "2DkHmQavK9V2UzTYrMYT";
+export const DEFAULT_MIZAN_VOICE_SETTINGS = {stability:0.5,similarity_boost:0.75,speed:1.0} as const;
 const LEGACY_VOICE_IDS = new Set([
   "MX8opBj7bbi4G2cE9j2w",
   "SAz9YHcvj6GT2YYXdXww",
@@ -117,9 +120,9 @@ export async function getHQElevenLabsConfig(
       return {
         voice_id: normalizeVoiceId(null, env.MIZAN_VOICE_ID),
         model_id: "eleven_v4_turbo",
-        stability: 0.4,
-        similarity_boost: 0.9,
-        speed: 0.9
+        stability: 0.5,
+        similarity_boost: 0.75,
+        speed: 1.0
       };
     }
 
@@ -127,6 +130,7 @@ export async function getHQElevenLabsConfig(
     const voiceId = normalizeVoiceId(saved.voice_id, env.MIZAN_VOICE_ID);
 
     const numeric = (value: unknown, fallback: number, min: number, max: number) => {
+      if(value === null || value === undefined || typeof value === "string" && !value.trim())return fallback;
       const number = Number(value);
       return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
     };
@@ -134,18 +138,18 @@ export async function getHQElevenLabsConfig(
     return {
       voice_id: voiceId,
       model_id: "eleven_v4_turbo",
-      stability: numeric(saved.stability, 0.4, 0, 1),
-      similarity_boost: numeric(saved.similarity_boost, 0.9, 0, 1),
-      speed: numeric(saved.speed, 0.9, 0.7, 1.2)
+      stability: numeric(saved.stability, 0.5, 0, 1),
+      similarity_boost: numeric(saved.similarity_boost, 0.75, 0, 1),
+      speed: numeric(saved.speed, 1.0, 0.7, 1.2)
     };
   } catch (error) {
     console.error("HQ ElevenLabs configuration could not be loaded:", error);
     return {
       voice_id: normalizeVoiceId(null, env.MIZAN_VOICE_ID),
       model_id: "eleven_v4_turbo",
-      stability: 0.4,
-      similarity_boost: 0.9,
-      speed: 0.9
+      stability: 0.5,
+      similarity_boost: 0.75,
+      speed: 1.0
     };
   }
 }
@@ -188,6 +192,7 @@ export async function resolveTenant(
     // Normalize records cached before the industry field was introduced.
     return {
       ...tenant,
+      name: tenant.slug === "mizan-hq" ? MIZAN_PROFILE.status : tenant.name,
       industry:
         typeof tenant.industry === "string" && tenant.industry.trim()
           ? tenant.industry.trim()
@@ -206,6 +211,7 @@ export async function resolveTenant(
   if (!row) return null;
   const tenant = {
     ...row,
+    name: row.slug === "mizan-hq" ? MIZAN_PROFILE.status : row.name,
     industry:
       typeof row.industry === "string" && row.industry.trim()
         ? row.industry.trim()
@@ -225,6 +231,7 @@ export async function resolveTenantByDomain(
     const tenant = cached as TenantConfig;
     return {
       ...tenant,
+      name: tenant.slug === "mizan-hq" ? MIZAN_PROFILE.status : tenant.name,
       industry:
         typeof tenant.industry === "string" && tenant.industry.trim()
           ? tenant.industry.trim()
@@ -243,6 +250,7 @@ export async function resolveTenantByDomain(
   if (!row) return null;
   const tenant = {
     ...row,
+    name: row.slug === "mizan-hq" ? MIZAN_PROFILE.status : row.name,
     industry:
       typeof row.industry === "string" && row.industry.trim()
         ? row.industry.trim()

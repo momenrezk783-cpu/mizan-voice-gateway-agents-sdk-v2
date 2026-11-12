@@ -10,7 +10,7 @@
 CREATE TABLE IF NOT EXISTS global_voice_config (
     id INTEGER PRIMARY KEY DEFAULT 1,
     system_prompt TEXT NOT NULL,
-    voice_id TEXT NOT NULL DEFAULT 'MX8opBj7bbi4G2cE9j2w',
+    voice_id TEXT NOT NULL DEFAULT '2DkHmQavK9V2UzTYrMYT',
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
@@ -18,7 +18,7 @@ INSERT OR IGNORE INTO global_voice_config (id, system_prompt, voice_id)
 VALUES (
     1,
     'أنت ميزان، المساعد الصوتي المصري العام. تتحدث باللهجة المصرية بأسلوب ودود ومهني ومحترم. تجيب على أسئلة المتصلين وتساعدهم بحسن نية. أنت لست متخصصاً في مجال معين بل مساعد عام يتكيف مع أي نشاط تجاري أو خدمي. كن موجزاً في إجاباتك وواضحاً. إذا سُئلت عن شيء خارج نطاق معرفتك، اعتذر بأدب وحوّل المتصل للمنشأة المعنية.',
-    'MX8opBj7bbi4G2cE9j2w'
+    '2DkHmQavK9V2UzTYrMYT'
 );
 
 -- 2. Industry Guards (super_admin ONLY — tenants cannot disable)
