@@ -9,7 +9,8 @@ const {default:worker,MizanVoiceAgent}=await importTs('src/index.ts');
 const auth=await importTs('src/lib/auth.ts');
 const contacts=await importTs('src/lib/private-contact.ts');
 const access=await importTs('src/lib/voice-access.ts');
-const env={DB:db,SESSION_SECRET:'local-test-secret-at-least-thirty-two-characters',CONTACT_ENC_KEY:Buffer.alloc(32,21).toString('base64'),TENANT_CONFIG:{get:async()=>null,put:async()=>{},delete:async()=>{}},VOICE_WS_BASE:'wss://example.test',DEEPGRAM_API_KEY:'synthetic-only',ELEVENLABS_TTS_KEY:'synthetic-only',PRIMARY_LLM:'test-primary',FALLBACK_LLM:'test-fallback'};
+const privacy=await importTs('src/lib/crypto.ts');
+const env={DB:db,SESSION_SECRET:'local-test-secret-at-least-thirty-two-characters',CONTACT_ENC_KEY:Buffer.alloc(32,21).toString('hex'),TENANT_CONFIG:{get:async()=>null,put:async()=>{},delete:async()=>{}},VOICE_WS_BASE:'wss://example.test',DEEPGRAM_API_KEY:'synthetic-only',ELEVENLABS_TTS_KEY:'synthetic-only',PRIMARY_LLM:'test-primary',FALLBACK_LLM:'test-fallback'};
 const ctx={waitUntil:()=>{}};
 const origin='https://example.test';
 const request=(url,method='GET',body,extra={})=>new Request(origin+url,{method,headers:{Origin:origin,'Content-Type':'application/json',...extra},...(body===undefined?{}:{body:JSON.stringify(body)})});
@@ -17,6 +18,14 @@ const body=(overrides={})=>({requestId:crypto.randomUUID(),name:'Quote Sentinel'
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const originalFetch=globalThis.fetch,agents=[];
 try {
+  const key=Buffer.from(Array.from({length:32},(_,i)=>i*7%256)),plain='Synthetic private contact';
+  const b64={CONTACT_ENC_KEY:key.toString('base64')},hex={CONTACT_ENC_KEY:key.toString('hex').toUpperCase()};
+  assert.equal(await privacy.decryptPII(await privacy.encryptPII(plain,b64),hex),plain);
+  assert.equal(await privacy.decryptPII(await privacy.encryptPII(plain,hex),b64),plain);
+  for(const invalid of ['not-a-key',Buffer.alloc(16).toString('base64'),Buffer.alloc(48,255).toString('base64')]){
+    await assert.rejects(privacy.encryptPII(plain,{CONTACT_ENC_KEY:invalid}),/32-byte AES key/);
+  }
+  console.log('PASS existing AES-256 key works interchangeably as hex/base64 without rotation; invalid lengths rejected');
   for(const file of ['schema.sql','migration-001.sql','migration-002.sql','migration-003.sql','migration-004.sql','migration-005.sql'])db.apply(file);
   db.apply('migration-005.sql');
   await db.prepare(`INSERT INTO tenants(id,slug,name,industry,domain,max_concurrent_sessions) VALUES ('a','tenant-a','Example A','general','customer.example',3),('b','tenant-b','Example B','general',NULL,1),('hq','mizan-hq','Mizan Consult','general',NULL,3)`).run();

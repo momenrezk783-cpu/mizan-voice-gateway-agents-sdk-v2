@@ -2,8 +2,8 @@
 // Mizan Voice Gateway — AES-GCM 256-bit PII Encryption
 // ============================================================================
 // Used for encrypting caller_name and caller_phone in call_sessions.
-// Compliant with Egyptian Law No. 151 of 2020 data protection requirements.
-// Key is stored as CONTACT_ENC_KEY secret (base64-encoded 32-byte key).
+// One technical protection; encryption alone does not establish legal compliance.
+// CONTACT_ENC_KEY accepts a 32-byte key encoded as base64 or 64 hexadecimal digits.
 
 /**
  * Encrypt plaintext using AES-GCM 256-bit.
@@ -69,11 +69,20 @@ export function redactPII(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Internal: Import AES-GCM key from base64-encoded secret
+// Internal: Import the existing AES-GCM key without changing its key material.
 // ---------------------------------------------------------------------------
 
 async function importKey(base64Key: string): Promise<CryptoKey> {
-  const rawKey = Uint8Array.from(atob(base64Key), (c) => c.charCodeAt(0));
+  if (typeof base64Key !== "string") throw new Error("CONTACT_ENC_KEY is not configured");
+  const encoded = base64Key.trim();
+  let rawKey: Uint8Array;
+  if (/^[a-f0-9]{64}$/iu.test(encoded)) {
+    rawKey = Uint8Array.from(encoded.match(/../g)!, byte => parseInt(byte, 16));
+  } else {
+    try { rawKey = Uint8Array.from(atob(encoded), c => c.charCodeAt(0)); }
+    catch { throw new Error("CONTACT_ENC_KEY must encode a 32-byte AES key"); }
+  }
+  if (rawKey.length !== 32) throw new Error("CONTACT_ENC_KEY must encode a 32-byte AES key");
   return crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM" }, false, [
     "encrypt",
     "decrypt",
