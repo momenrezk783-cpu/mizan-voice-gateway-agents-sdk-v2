@@ -13,10 +13,22 @@ export function loadUrl(file) {
   const abs = path.resolve(file);
   if (cache.has(abs)) return cache.get(abs);
   const code = ts.transpileModule(fs.readFileSync(abs,'utf8'),{fileName:abs,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText
-    .replace(/(from\s+["'])([^"']+)(["'])/gu,(_,prefix,spec,suffix)=>prefix+(externals[spec]??(spec.startsWith('.')?loadUrl(path.resolve(path.dirname(abs),spec+'.ts')):spec))+suffix);
+    .replace(/(from\s+["'])([^"']+)(["'])/gu,(_,prefix,spec,suffix)=>prefix+(externals[spec]??(spec.startsWith('.')?loadUrl(path.resolve(path.dirname(abs),spec+'.ts')):import.meta.resolve(spec)))+suffix);
   const url=asUrl(code);cache.set(abs,url);return url;
 }
 export const importTs = file => import(loadUrl(file));
+export function mockDialogueResponse(url,onInput=()=>{}) {
+  const listeners=new Map();let settings;
+  const socket={addEventListener:(name,fn)=>listeners.set(name,fn),accept(){},close(){},send(raw){
+    const value=JSON.parse(raw);
+    if(value.voices)settings=value;
+    if(value.inputs){
+      onInput({text:value.inputs[0].text,voice_id:value.inputs[0].voice_id,model_id:new URL(url).searchParams.get('model_id'),language_code:new URL(url).searchParams.get('language_code'),voice_settings:settings.voice_settings});
+      queueMicrotask(()=>listeners.get('message')?.({data:JSON.stringify({audio:Buffer.alloc(160).toString('base64'),is_final:true})}));
+    }
+  }};
+  return {status:101,webSocket:socket};
+}
 const python = `import sqlite3,json,sys
 p=json.load(sys.stdin)
 c=sqlite3.connect(p['file'],timeout=30);c.row_factory=sqlite3.Row

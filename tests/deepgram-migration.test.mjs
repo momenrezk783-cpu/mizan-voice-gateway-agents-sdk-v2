@@ -113,7 +113,7 @@ class MockDeepgramSocket {
 {
   const urlStr = buildDeepgramListenUrl({
     model: "nova-3",
-    language: "ar-EG",
+    language: "ar",
     encoding: "linear16",
     sampleRate: 16000,
     channels: 1,
@@ -123,7 +123,8 @@ class MockDeepgramSocket {
   const parsed = new URL(urlStr);
   assert.equal(parsed.origin + parsed.pathname, "https://api.deepgram.com/v1/listen");
   assert.equal(parsed.searchParams.get("model"), "nova-3");
-  assert.equal(parsed.searchParams.get("language"), "ar-EG");
+  assert.equal(parsed.searchParams.get("language"), "ar");
+  assert.deepEqual(parsed.searchParams.getAll("language_hint"), [], "Arabic-only mode must not send English language hints");
   assert.equal(parsed.searchParams.get("encoding"), "linear16");
   assert.equal(parsed.searchParams.get("sample_rate"), "16000");
   assert.equal(parsed.searchParams.get("channels"), "1");
@@ -383,11 +384,24 @@ class MockDeepgramSocket {
 
   assert.ok(!agentSource.includes("whisper-large-v3-turbo"), "Whisper STT must be removed from src/agent.ts");
   assert.ok(agentSource.includes("DeepgramStreamingSession"), "DeepgramStreamingSession must be integrated in src/agent.ts");
+  assert.match(agentSource, /language:\s*"ar"\s*\n\s*}\s*\)\s*;/, "Mizan Deepgram session must force Arabic-only language after all overrides");
   assert.ok(agentSource.includes("eleven_v4_turbo"), "ElevenLabs model_id eleven_v4_turbo must be preserved");
   const { DEFAULT_MIZAN_VOICE_ID } = await loadTsModule("src/lib/tenant.ts");
   assert.equal(DEFAULT_MIZAN_VOICE_ID, "2DkHmQavK9V2UzTYrMYT", "Use the owner's selected ElevenLabs voice");
   assert.ok(indexSource.includes("body.voice_id ?? DEFAULT_MIZAN_VOICE_ID"), "New tenants use the central voice default");
   assert.ok(!indexSource.includes("audioNode.connect(audioCtx.destination)"), "Mic-to-speaker loopback must be removed from src/index.ts");
+  assert.ok(!agentSource.includes("Half-duplex echo protection"), "Server must not time-gate microphone input during TTS");
+  assert.ok(!agentSource.includes("agentSpeakingUntil"), "Estimated TTS duration must not suppress caller audio");
+  assert.ok(agentSource.includes('command:"barge_in"'), "Deepgram speech-start events must interrupt current browser playback");
+  assert.ok(indexSource.includes("echoCancellation:true"), "Browser microphone capture must request acoustic echo cancellation");
+  assert.ok(!indexSource.includes("audioCtx.currentTime<playbackTime+0.25"), "Client must not block microphone frames during playback");
+  assert.ok(indexSource.includes("function stopPlayback()"), "Client must stop queued playback when caller barges in");
+  const wranglerConfig = fs.readFileSync(path.join(rootDir, "wrangler.toml"), "utf8");
+  assert.ok(wranglerConfig.includes("MX8opBj7bbi4G2cE9j2w"), "Wrangler documentation must identify the configured ElevenLabs voice ID");
+  const deployWorkflow = fs.readFileSync(path.join(rootDir, ".github/workflows/deploy.yml"), "utf8");
+  assert.ok(!deployWorkflow.includes("paths:"), "Root deployment must not be restricted to obsolete nested source paths");
+  assert.ok(deployWorkflow.includes("npm run release:gate"), "Production deploy workflow must run the test suite");
+  assert.ok(!deployWorkflow.includes("working-directory: ./mizan-voice-gateway-v2"), "Deploy workflow must not build the obsolete nested project");
 
   // Verify Egyptian Arabic caller title extraction and banned-word speech sanitization still work
   const caller = extractCallerTitleAndName("مساء الخير أنا دكتور محمد من القاهرة");
