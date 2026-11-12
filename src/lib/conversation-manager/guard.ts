@@ -343,6 +343,10 @@ export function sanitizeForSpeechWithViolations(
     if(word === policy.firstName || NON_NAME_WORDS.has(word))return match;
     return greeting;
   });
+  applyRule("unverified_english_greeting_name",/\b(hello|hi|good morning|good evening)\s+([a-z][a-z'’-]{1,39})(?=[,.!?]|$)/giu,(match:string,greeting:string,word:string)=>{
+    if(word.toLowerCase() === policy.firstName?.toLowerCase() || /^(?:there|again|everyone|all)$/iu.test(word))return match;
+    return greeting;
+  });
 
   value = value
     .replace(/[ \t]{2,}/gu, " ")

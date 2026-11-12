@@ -20,6 +20,9 @@ for(const text of ['صباح الخير يا معاك','أهلا يا أحمد،
   assert.ok(safe.violations.length>0,text);
 }
 assert.equal(guard.sanitizeForSpeech('يا ريت توضح الطلب',{}),'يا ريت توضح الطلب');
+assert.equal(guard.sanitizeForSpeech('Hello John, how can I help?',{}),'Hello, how can I help?');
+assert.equal(guard.sanitizeForSpeech('Hi there',{}),'Hi there');
+assert.equal(guard.sanitizeForSpeech('Hello John',{callerName:'John'}),'Hello John');
 assert.match(guard.sanitizeForSpeech('أهلا يا أحمد',{callerName:'أحمد'}),/يا أحمد/);
 assert.doesNotMatch(guard.resolvePersonAddressPolicy({callerName:'معاك'}).preferredAddress,/يا معاك/);
 assert.equal(guard.resolvePersonAddressPolicy({role:'manager'}).firstName,null);
