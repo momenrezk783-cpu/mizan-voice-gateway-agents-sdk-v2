@@ -80,8 +80,17 @@ const NON_NAME_WORDS = new Set([
   "أحجز", "اكتبهم", "أكتبهم", "اقولهم", "أقولهم", "سامعني", "سامعاني",
   "الو", "آلو", "ألو", "ايوه", "أيوه", "تمام", "ماشي", "طيب", "شكرا", "شكراً",
   "عندي", "عندنا", "شغال", "شغالة", "موجود", "موجودة", "كويس", "كويسة",
-  "مش", "بس", "كنت", "عاوزه", "هنا", "بقول", "بكلمك", "حابب", "حابة", "اسمي", "إسمي"
+  "مش", "بس", "كنت", "عاوزه", "هنا", "بقول", "بكلمك", "حابب", "حابة", "اسمي", "إسمي",
+  "معاكم", "معاكو", "معانا", "اسمى", "اسمك", "الخير", "أهلا", "اهلا", "بيك", "يا", "ميزان", "المساعد", "اتفضل", "تفضل", "نعم", "لا", "حلو", "إزيك", "ازيك", "أنا", "انا", "حضرتك",
+  "unknown", "undefined", "null", "caller", "user", "hello", "hi", "yes", "okay", "ok"
 ]);
+const ORDINARY_VOCATIVES=new Set(["ريت","سلام","رب","ترى"]);
+
+/** A context field is not evidence that a greeting/filler word is a name. */
+function verifiedFirstName(value: unknown): string | null {
+  const word=stripMarks(typeof value === "string" ? value : "").trim().split(/\s+/u)[0];
+  return word && /^[\p{L}][\p{L}'’-]{1,39}$/u.test(word) && !NON_NAME_WORDS.has(word.toLowerCase()) && !canonicalTitle(word) ? word : null;
+}
 
 export function isProceduralPhrase(text: string): boolean {
   const cleaned = stripMarks(String(text ?? "")).trim();
@@ -122,7 +131,7 @@ export function extractCallerTitleAndName(
 ): { title: string | null; name: string | null; gender: CallerGender } {
   const result = {
     title: existing.callerTitle ?? null,
-    name: existing.callerName ?? null,
+    name: verifiedFirstName(existing.callerName),
     gender: existing.callerGender ?? ("unknown" as CallerGender)
   };
   const text = stripMarks(String(utterance ?? "")).trim();
@@ -179,12 +188,10 @@ export function resolvePersonAddressPolicy(context: PersonTitleContext = {}): {
   canonicalTitle: string | null;
   firstName: string | null;
 } {
-  const firstName = String(context.callerName ?? "").trim().split(/\s+/)[0] || null;
+  const firstName = verifiedFirstName(context.callerName);
   const title = canonicalTitle(context.callerTitle);
   const gender = inferGender(title, context.callerGender ?? "unknown");
-  const preferredAddress = context.role === "manager"
-    ? `يا مستر ${firstName || "مؤمن"}`
-    : title && firstName
+  const preferredAddress = title && firstName
       ? `يا ${title} ${firstName}`
       : title
         ? `يا ${title}`
@@ -233,7 +240,11 @@ export function containsBannedAddress(text: string, context: PersonTitleContext 
   for (const match of value.matchAll(vocative)) {
     const normalized = canonicalTitle(match[1]);
     if (!allowed.canonicalTitle || normalized !== allowed.canonicalTitle) return true;
-    if (allowed.firstName && match[2] && match[2] !== allowed.firstName) return true;
+    if (match[2] && match[2] !== allowed.firstName) return true;
+  }
+  for(const match of value.matchAll(new RegExp(`${L}يا\\s+([\\p{L}'’-]{2,40})${R}`,"gu"))){
+    const word=match[1];
+    if(!ORDINARY_VOCATIVES.has(word) && word !== allowed.firstName && !(allowed.canonicalTitle && canonicalTitle(word) === allowed.canonicalTitle))return true;
   }
   return false;
 }
@@ -314,12 +325,28 @@ export function sanitizeForSpeechWithViolations(
   value = value.replace(vocative, (_match, rawTitle: string, rawName?: string) => {
     const title = canonicalTitle(rawTitle);
     const titleMatches = title && policy.canonicalTitle === title;
-    const nameMatches = !policy.firstName || !rawName || rawName === policy.firstName;
+    const nameMatches = !rawName || Boolean(policy.firstName && rawName === policy.firstName);
     if (titleMatches && nameMatches) return `يا ${title}${rawName ? ` ${rawName}` : ""}`;
-    if (rawName && (!policy.firstName || rawName === policy.firstName)) return `يا ${rawName}`;
+    if (titleMatches) return `يا ${title}`;
+    if (rawName && policy.firstName && rawName === policy.firstName) return `يا ${rawName}`;
     return "";
   });
   if (value !== beforeVocative) violations.push("vocative_title");
+
+  // Bare personal addresses need the same explicit evidence as titled addresses.
+  // Keep ordinary Egyptian expressions such as "يا ريت" and "يا سلام".
+  applyRule("unverified_caller_name",new RegExp(`${L}يا\\s+([\\p{L}'’-]{2,40})${R}`,"gu"),(_match:string,word:string)=>{
+    if(ORDINARY_VOCATIVES.has(word) || word === policy.firstName || canonicalTitle(word) === policy.canonicalTitle && Boolean(policy.canonicalTitle))return `يا ${word}`;
+    return "";
+  });
+  applyRule("unverified_greeting_name",/(صباح الخير|مساء الخير|أهلا|اهلا)\s+([\p{L}'’-]{2,40})(?=[،,.!?؟]|$)/gu,(match:string,greeting:string,word:string)=>{
+    if(word === policy.firstName || NON_NAME_WORDS.has(word))return match;
+    return greeting;
+  });
+  applyRule("unverified_english_greeting_name",/\b(hello|hi|good morning|good evening)\s+([a-z][a-z'’-]{1,39})(?=[,.!?]|$)/giu,(match:string,greeting:string,word:string)=>{
+    if(word.toLowerCase() === policy.firstName?.toLowerCase() || /^(?:there|again|everyone|all)$/iu.test(word))return match;
+    return greeting;
+  });
 
   value = value
     .replace(/[ \t]{2,}/gu, " ")

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import {importTs} from './helpers/runtime.mjs';
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -18,9 +19,7 @@ function transpileTs(relPath) {
 }
 
 async function loadTsModule(relPath) {
-  const jsCode = transpileTs(relPath);
-  const dataUrl = `data:text/javascript;base64,${Buffer.from(jsCode, "utf8").toString("base64")}`;
-  return import(dataUrl);
+  return importTs(relPath);
 }
 
 console.log("=== Running Mizan Voice Gateway Deepgram STT Migration Test Suite ===");
@@ -397,7 +396,7 @@ class MockDeepgramSocket {
   assert.ok(!indexSource.includes("audioCtx.currentTime<playbackTime+0.25"), "Client must not block microphone frames during playback");
   assert.ok(indexSource.includes("function stopPlayback()"), "Client must stop queued playback when caller barges in");
   const wranglerConfig = fs.readFileSync(path.join(rootDir, "wrangler.toml"), "utf8");
-  assert.ok(wranglerConfig.includes("MX8opBj7bbi4G2cE9j2w"), "Wrangler documentation must identify the configured ElevenLabs voice ID");
+  assert.ok(wranglerConfig.includes("2DkHmQavK9V2UzTYrMYT"), "Wrangler documentation must identify the configured ElevenLabs voice ID");
   const deployWorkflow = fs.readFileSync(path.join(rootDir, ".github/workflows/deploy.yml"), "utf8");
   assert.ok(!deployWorkflow.includes("paths:"), "Root deployment must not be restricted to obsolete nested source paths");
   assert.ok(deployWorkflow.includes("npm run release:gate"), "Production deploy workflow must run the test suite");

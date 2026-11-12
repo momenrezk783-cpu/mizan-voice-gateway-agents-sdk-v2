@@ -173,7 +173,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       return;
     }
 
-    this.tenantName = tenant.name || this.tenantSlug;
+    this.tenantName = this.tenantSlug === "mizan-hq" ? MIZAN_PROFILE.status : tenant.name || this.tenantSlug;
     this.tenantIndustry = tenant.industry || "general";
 
     const globalConfig = await getGlobalVoiceConfig(this.env);
@@ -183,9 +183,9 @@ export class MizanVoiceAgent extends Agent<Env> {
       : {
           voice_id: globalConfig.voice_id,
           model_id: "eleven_v4_turbo",
-          stability: 0.4,
-          similarity_boost: 0.9,
-          speed: 0.9
+          stability: 0.5,
+          similarity_boost: 0.75,
+          speed: 1.0
         };
     if (this.tenantSlug === "mizan-hq" && !this.elevenLabsConfig) {
       console.error("HQ ElevenLabs config is missing; public-page voice settings are intentionally ignored");
@@ -708,7 +708,7 @@ export class MizanVoiceAgent extends Agent<Env> {
           : "ممكن توضح لي طلبك أكتر؟";
     }
 
-    if(this.tenantSlug === "mizan-hq" && /(?:شركة\s+مسجلة|ذات مسؤولية محدودة|منشأة فردية مقيدة|امتثال كامل|معتمدون رسميًا)/u.test(reply)) reply="Mizan Consult نشاط مستقل يُدار باسم مؤمن رزق في الإسكندرية، مصر. بنحدد ضوابط حماية البيانات حسب كل مشروع، ومش بندّعي تسجيل شركة أو امتثال قانوني كامل. تقدر تراجع صفحات التعريف والخصوصية والشروط على الموقع.";
+    if(this.tenantSlug === "mizan-hq" && /(?:شركة\s+مسجلة|ذات مسؤولية محدودة|منشأة فردية مقيدة|امتثال كامل|معتمدون رسميًا)/u.test(reply)) reply="Mizan Consult مؤسسة ميزان (تحت التأسيس) في الإسكندرية، مصر. بنحدد ضوابط حماية البيانات حسب كل مشروع، ومش بندّعي تسجيل شركة أو امتثال قانوني كامل. تقدر تراجع صفحات التعريف والخصوصية والشروط على الموقع.";
     reply=this.protect(reply);
     // 4. Deterministic output guard: strip banned honorifics, track violations, and block false action claims
     const sanitized = sanitizeForSpeechWithViolations(reply, this.personTitleContext);

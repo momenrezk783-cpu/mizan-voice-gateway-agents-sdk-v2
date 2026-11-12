@@ -7,7 +7,7 @@
 # Architecture:
 #   - Deepgram Streaming STT (`wss://api.deepgram.com/v1/listen`, `nova-3`)
 #   - Workers AI LLM (`@cf/daily-co/phonellm-mini-alpha-2` + fallback)
-#   - ElevenLabs TTS (`eleven_v4_turbo`, voice ID `MX8opBj7bbi4G2cE9j2w`)
+#   - ElevenLabs TTS (`eleven_v4_turbo`, voice ID `2DkHmQavK9V2UzTYrMYT`)
 #   - Queues for background work (`mizan-background`)
 #   - SQLite-backed DO (`MizanVoiceAgent`) for persistent conversation state
 # ============================================================================
@@ -101,5 +101,5 @@ head_sampling_rate = 1
 #   SESSION_SECRET       — HMAC-SHA256 session token signing
 #   CONTACT_ENC_KEY      — 256-bit AES-GCM key for patient PII
 #   ADMIN_PASSKEY_HASH   — Super Admin passkey gate
-#   ELEVENLABS_TTS_KEY   — ElevenLabs TTS API key (voice ID MX8opBj7bbi4G2cE9j2w)
+#   ELEVENLABS_TTS_KEY   — ElevenLabs TTS API key (voice ID 2DkHmQavK9V2UzTYrMYT)
 #   DEEPGRAM_API_KEY     — Deepgram streaming STT API key

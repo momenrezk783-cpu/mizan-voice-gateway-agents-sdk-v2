@@ -1,5 +1,26 @@
 # Mizan profile, quotations and private call contacts
 
+## Voice and institutional identity update (migration 006)
+
+After backing up D1, run `migration-006.sql` after 001–005. It updates the stored
+HQ/global voice to `2DkHmQavK9V2UzTYrMYT` and HQ settings to stability `0.5`,
+similarity `0.75`, speed `1.0`. It replaces the superseded personal HQ identity
+with `مؤسسة ميزان (تحت التأسيس)`. Custom voices and business text belonging to
+other tenants are preserved. Repeatable triggers normalize deprecated SQLite
+voice defaults without rebuilding existing tables. Historical call/audit records
+are not rewritten.
+
+Delete KV keys `global:voice_config`, `tenant:mizan-hq`, and
+`voice_config:mizan-hq` after the migration, then deploy and start a new call.
+The current `eleven_v4_turbo` dialogue protocol accepts stability only. Similarity
+and speed are stored in configuration and are sent by the HTTP TTS path when a
+compatible model is used; unsupported fields are never sent to dialogue synthesis.
+This update retains the current model unless a model switch is selected explicitly.
+
+The output guard removes unknown personal vocatives before both TTS and transcript
+delivery. Neutral greetings are used when a caller name is unavailable, and
+procedural words such as `معاك` cannot become caller identities.
+
 This source change has not migrated or deployed production. It keeps the existing
 Deepgram STT, Workers AI language model and ElevenLabs TTS configuration.
 

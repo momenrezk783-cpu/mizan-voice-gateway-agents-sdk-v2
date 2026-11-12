@@ -38,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_tenant_cat ON tenant_knowledge(tenant_s
 CREATE TABLE IF NOT EXISTS tenant_voice_config (
     tenant_slug TEXT PRIMARY KEY,
     system_prompt TEXT NOT NULL,                  -- Personality, tone, Egyptian dialect rules
-    voice_id TEXT NOT NULL DEFAULT 'MX8opBj7bbi4G2cE9j2w',  -- ElevenLabs voice ID
+    voice_id TEXT NOT NULL DEFAULT '2DkHmQavK9V2UzTYrMYT',  -- ElevenLabs voice ID
     allow_medical_advice INTEGER NOT NULL DEFAULT 0,  -- 0/1 guard against diagnoses
     escalation_phone TEXT,                        -- Emergency transfer number
     ttl_seconds INTEGER NOT NULL DEFAULT 30,     -- Prompt cache TTL
