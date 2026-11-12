@@ -5,6 +5,8 @@
 
 import { Agent, routeAgentRequest, type Connection } from "agents";
 import { generateText } from "ai";
+import { VoiceTrace, generationUsage, type TracingEnv } from "./lib/tracing";
+import { synthesizeDialogueAudio } from "./lib/elevenlabs-tts";
 import { createAI, type CloudflareLanguageModelId } from "agents/models/ai-sdk";
 import {
   resolveTenant,
@@ -65,7 +67,7 @@ import {
   type DeepgramStreamConfig
 } from "./lib/deepgram-stt";
 
-export interface Env {
+export interface Env extends TracingEnv {
   DB: D1Database;
   TENANT_CONFIG: KVNamespace;
   AUDIO_BUCKET?: R2Bucket;
@@ -133,7 +135,6 @@ export class MizanVoiceAgent extends Agent<Env> {
   private clientAudioFormat: "linear16" | "float32" = "linear16";
   private conversation: ChatMessage[] = [];
   private processingTurn = false;
-  private agentSpeakingUntil = 0;
   private lastProcessedTranscript = "";
   private lastProcessedAt = 0;
   private responseLanguage: "ar" | "en" = "ar";
@@ -321,6 +322,11 @@ export class MizanVoiceAgent extends Agent<Env> {
             }
           }
         },
+        onSpeechStarted: () => {
+          if(this.sessionClosed || this.contactPaused || this.deepgramSession !== session)return;
+          this.metrics.bargeIns++;
+          connection.send(JSON.stringify({type:"control",command:"barge_in"}));
+        },
         onFinalTranscript: async (finalText, _confidence, detectedLanguage) => {
           if (this.deepgramSession === session && !this.contactPaused) await this.handleFinalTranscript(connection, finalText, detectedLanguage);
         },
@@ -340,13 +346,13 @@ export class MizanVoiceAgent extends Agent<Env> {
       },
       {
         model: this.env.DEEPGRAM_MODEL || "nova-3",
-        language: this.env.DEEPGRAM_LANGUAGE || "ar-EG",
         encoding: "linear16",
         sampleRate: 16000,
         channels: 1,
         endpointingMs: 300,
         utteranceEndMs: 1000,
-        ...this.deepgramConfigOverride
+        ...this.deepgramConfigOverride,
+        language: "ar"
       }
     );
 
@@ -455,21 +461,6 @@ export class MizanVoiceAgent extends Agent<Env> {
       return;
     }
 
-    // Half-duplex echo protection: while the agent is speaking (or in the acoustic tail cooldown),
-    // ignore low/moderate energy microphone frames so TTS speaker playback never loops back into STT.
-    const now = Date.now();
-    if (this.processingTurn || now < this.agentSpeakingUntil) {
-      const pcm = normalizeToLinear16Pcm(message, this.clientAudioFormat);
-      const rms = computePcm16Rms(pcm);
-      // Only pass through if user is actively barging in with strong near-field speech
-      if (this.processingTurn || rms < 0.08) {
-        return;
-      }
-      // User barged in with high-energy speech: clear the TTS playback lock
-      this.metrics.bargeIns++;
-      this.agentSpeakingUntil = 0;
-    }
-
     this.deepgramSession.sendAudio(message, this.clientAudioFormat);
   }
 
@@ -502,10 +493,12 @@ export class MizanVoiceAgent extends Agent<Env> {
     // Preserve Arabic-default response mode per Mizan Voice Gateway behavior
     this.responseLanguage = "ar";
 
+    const voiceTrace = VoiceTrace.start(this.env, this.sessionId || "unknown", this.tenantSlug || "unknown");
     try {
       connection.send(JSON.stringify({ type: "transcript", speaker: "caller", text: cleaned }));
-      await this.respondToTranscript(connection, cleaned);
+      await this.respondToTranscript(connection, cleaned, voiceTrace);
     } catch (error) {
+      voiceTrace.fail();
       console.error("Voice pipeline failed");
       if (!this.sessionClosed) {
         try {
@@ -520,6 +513,7 @@ export class MizanVoiceAgent extends Agent<Env> {
         }
       }
     } finally {
+      await voiceTrace.finish();
       this.processingTurn = false;
       if (!this.sessionClosed) {
         try {
@@ -580,7 +574,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     };
   }
 
-  private async respondToTranscript(connection: Connection, transcript: string) {
+  private async respondToTranscript(connection: Connection, transcript: string, voiceTrace: VoiceTrace = VoiceTrace.start({}, "test", "test")) {
     if (this.sessionClosed || !this.tenantSlug || !this.sessionId) return;
     const turnStart = Date.now();
     this.turnCount++;
@@ -590,12 +584,12 @@ export class MizanVoiceAgent extends Agent<Env> {
     const toolDeps = this.createToolDeps();
     toolDeps.ctx.clock = buildClock("Africa/Cairo");
     // 1. Run Conversation Manager turn ingestion (state transitions, slot validation, confirmation guards, actions)
-    const { outcomes } = await ingestCallerUtterance(
+    const { outcomes } = await voiceTrace.step("manage-conversation", "tool", () => ingestCallerUtterance(
       toolDeps,
       this.cmSession,
       transcript,
       null
-    );
+    ));
     for (const outcome of outcomes) {
       if (outcome.rejected) {
         this.metrics.slotRejections += outcome.rejected;
@@ -636,12 +630,12 @@ export class MizanVoiceAgent extends Agent<Env> {
         const systemPrompt = buildPrompt();
         try {
           const ai = createAI({ binding: this.env.AI });
-          const result = await generateText({
+          const result = await voiceTrace.step("generate-response", "generation", () => generateText({
             model: ai(this.env.PRIMARY_LLM as CloudflareLanguageModelId),
             system: systemPrompt,
             messages,
             temperature: 0
-          });
+          }), {"langfuse.observation.model.name":this.env.PRIMARY_LLM}, generationUsage);
           reply = result.text.trim();
           console.info("LLM response metadata", { model: this.env.PRIMARY_LLM, finishReason: result.finishReason,
             inputTokens: result.usage?.inputTokens, outputTokens: result.usage?.outputTokens });
@@ -650,12 +644,12 @@ export class MizanVoiceAgent extends Agent<Env> {
           console.error("Primary LLM failed");
           try {
             const ai = createAI({ binding: this.env.AI });
-            const result = await generateText({
+            const result = await voiceTrace.step("generate-fallback-response", "generation", () => generateText({
               model: ai(this.env.FALLBACK_LLM as CloudflareLanguageModelId),
               system: systemPrompt,
               messages,
               temperature: 0.4
-            });
+            }), {"langfuse.observation.model.name":this.env.FALLBACK_LLM}, generationUsage);
             reply = result.text.trim();
             console.info("LLM response metadata", { model: this.env.FALLBACK_LLM, finishReason: result.finishReason,
               inputTokens: result.usage?.inputTokens, outputTokens: result.usage?.outputTokens });
@@ -683,12 +677,12 @@ export class MizanVoiceAgent extends Agent<Env> {
             input?: Record<string, unknown>;
           };
           if (parsedTool.name) {
-            const outcome = await executeTool(
+            const outcome = await voiceTrace.step("execute-conversation-tool", "tool", () => executeTool(
               toolDeps,
               this.cmSession,
-              parsedTool.name,
+              parsedTool.name!,
               parsedTool.input ?? {}
-            );
+            ));
             if (outcome.rejected) this.metrics.slotRejections += outcome.rejected;
             if (!this.privateContact && this.intents.find(i=>i.id===this.cmSession.intent)?.action) {
               this.requestContact(connection);
@@ -746,6 +740,11 @@ export class MizanVoiceAgent extends Agent<Env> {
 
     this.conversation.push({ role: "user", content: transcript }, { role: "assistant", content: reply });
 
+    voiceTrace.metadata({
+      "langfuse.observation.input": JSON.stringify({ language: this.responseLanguage }),
+      "langfuse.observation.output": JSON.stringify({ state: this.cmSession.state, handoff: Boolean(this.cmSession.handoff) }),
+      "langfuse.observation.metadata.turn_index": this.turnCount
+    });
     const latency = Date.now() - turnStart;
     this.turnCount++;
 
@@ -778,11 +777,8 @@ export class MizanVoiceAgent extends Agent<Env> {
     connection.send(JSON.stringify({ type: "status", status: "speaking" }));
 
     try {
-      const audio = await this.synthesizeElevenLabsAudio(reply);
+      const audio = await voiceTrace.step("synthesize-speech", "span", () => this.synthesizeElevenLabsAudio(reply), {}, (audio) => ({ "langfuse.observation.metadata.audio_bytes": audio.byteLength }));
       if (this.sessionClosed) return;
-      // Estimate MP3 playback duration at 128 kbps (16,000 bytes/sec) + 350ms acoustic echo tail
-      const estimatedDurationMs = Math.max(600, Math.round((audio.byteLength / 16000) * 1000) + 350);
-      this.agentSpeakingUntil = Date.now() + estimatedDurationMs;
       connection.send(audio);
       const timeToAudioMs = Date.now() - turnStart;
       this.env.VOICE_METRICS?.writeDataPoint({
@@ -794,7 +790,11 @@ export class MizanVoiceAgent extends Agent<Env> {
     } catch (ttsError) {
       console.error("ElevenLabs TTS failed");
       if (!this.sessionClosed) {
-        connection.send(JSON.stringify({ type: "error", message: "تعذر تشغيل صوت ميزان من إعدادات HQ." }));
+        connection.send(JSON.stringify({
+          type: "error",
+          stage: "elevenlabs_tts",
+          message: "تعذر تشغيل صوت ميزان من إعدادات HQ.",
+        }));
       }
     }
 
@@ -818,6 +818,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     if (!apiKey) throw new Error("ELEVENLABS_TTS_KEY secret is not configured");
     const config = this.elevenLabsConfig;
     if (!config?.voice_id) throw new Error("HQ ElevenLabs voice config is unavailable");
+    if(config.model_id === "eleven_v4_turbo")return synthesizeDialogueAudio(text,apiKey,config,this.responseLanguage);
 
     const endpoint = new URL("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(config.voice_id));
     endpoint.searchParams.set("output_format", "mp3_44100_128");
@@ -966,7 +967,10 @@ export class MizanVoiceAgent extends Agent<Env> {
       };
 
       try {
-        const evaluation = JSON.parse(this.protect(JSON.stringify(await evaluateCall(this.env.AI, this.env.PRIMARY_LLM, evalState))));
+        const evaluationTrace=VoiceTrace.start(this.env,this.sessionId,this.tenantSlug,"evaluate-call");
+        let evaluation;
+        try {evaluation=JSON.parse(this.protect(JSON.stringify(await evaluateCall(this.env.AI,this.env.PRIMARY_LLM,evalState,evaluationTrace))));}
+        finally {await evaluationTrace.finish();}
         await persistCallEvaluationAndLearnings(
           this.env.DB,
           this.sessionId,

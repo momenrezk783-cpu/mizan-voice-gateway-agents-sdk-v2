@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {mockDialogueResponse} from './helpers/runtime.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import {createRequire} from 'node:module';
@@ -16,7 +17,7 @@ function loadUrl(file) {
   const compiled = ts.transpileModule(fs.readFileSync(absolute, 'utf8'), {
     fileName:absolute, compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}
   }).outputText.replace(/(from\s+["'])([^"']+)(["'])/gu, (_, prefix, spec, suffix) => {
-    const resolved = externals[spec] ?? (spec.startsWith('.') ? loadUrl(path.resolve(path.dirname(absolute),spec+'.ts')) : spec);
+    const resolved = externals[spec] ?? (spec.startsWith('.') ? loadUrl(path.resolve(path.dirname(absolute),spec+'.ts')) : import.meta.resolve(spec));
     return prefix + resolved + suffix;
   });
   const url = asUrl(compiled); cache.set(absolute,url); return url;
@@ -149,7 +150,7 @@ await test('actual agent retains early turns and identity without a response tok
   const calls=[], audioRequests=[], sends=[];
   const oldFetch=globalThis.fetch;
   globalThis.__mizanTestGenerate=async options=>{calls.push(structuredClone(options));return {text:'ميزان بيقدّم مساعد صوتي يرد على استفسارات العملاء.',finishReason:'stop'};};
-  globalThis.fetch=async (url,options)=>{audioRequests.push({url:String(url),body:JSON.parse(options.body)});return new Response(new Uint8Array(160),{headers:{'content-type':'audio/mpeg'}});};
+  globalThis.fetch=async (url,options)=>{if(String(url).includes("text-to-dialogue"))return mockDialogueResponse(url,body=>audioRequests.push({url:String(url),body}));audioRequests.push({url:String(url),body:JSON.parse(options.body)});return new Response(new Uint8Array(160),{headers:{'content-type':'audio/mpeg'}});};
   const env={PRIMARY_LLM:'@cf/daily-co/phonellm-mini-alpha-2',FALLBACK_LLM:'@cf/deepseek-ai/deepseek-v4.1-flash-1017',AI:{},
     ELEVENLABS_TTS_KEY:'test-only',BACKGROUND_QUEUE:{send:async()=>{}},VOICE_METRICS:{writeDataPoint:()=>{}},
     DB:{prepare:()=>({bind:()=>({all:async()=>({results:[]})})})}};
@@ -170,7 +171,7 @@ await test('actual agent retains early turns and identity without a response tok
     assert.equal((last.system.match(/<tenant_business_context>/g)||[]).length,0);
     assert.equal((last.system.match(/<\/tenant_business_context>/g)||[]).length,0);
     for(const call of calls) assert.equal(call.maxOutputTokens,undefined,'no application response token cap');
-    assert.ok(audioRequests.every(x=>x.url.includes('/2DkHmQavK9V2UzTYrMYT')));
+    assert.ok(audioRequests.every(x=>x.body.voice_id==='2DkHmQavK9V2UzTYrMYT'));
     assert.ok(audioRequests.every(x=>x.body.text.length>0));
     const fallbackCalls=[];
     globalThis.__mizanTestGenerate=async options=>{

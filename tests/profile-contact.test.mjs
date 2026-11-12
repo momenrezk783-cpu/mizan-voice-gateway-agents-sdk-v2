@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {SqliteD1,importTs} from './helpers/runtime.mjs';
+import {SqliteD1,importTs,mockDialogueResponse} from './helpers/runtime.mjs';
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'mizan-profile-'));
 const db=new SqliteD1(path.join(temp,'db.sqlite'));
 const {default:worker,MizanVoiceAgent}=await importTs('src/index.ts');
@@ -74,6 +74,7 @@ try {
     if(String(url).startsWith('https://api.deepgram.com/')){
       const socket={readyState:1,binary:[],controls:[],accept(){},addEventListener(){},send(data){if(typeof data==='string')this.controls.push(data);else this.binary.push(data);},close(){this.readyState=3;}};sockets.push(socket);return {status:101,webSocket:socket};
     }
+    if(String(url).includes("text-to-dialogue"))return mockDialogueResponse(url,body=>ttsRequests.push(body));
     assert.ok(String(url).startsWith('https://api.elevenlabs.io/'));ttsRequests.push(JSON.parse(options.body));return new Response(new Uint8Array(160),{headers:{'Content-Type':'audio/mpeg'}});
   };
   const ticket=await access.reserveVoiceCall(db,'tenant-a','privacy-ip',3,origin,env.SESSION_SECRET);assert.ok(ticket);await access.claimVoiceCall(db,'tenant-a',ticket.sessionId);
