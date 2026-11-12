@@ -5,7 +5,9 @@
 
 import { Agent, routeAgentRequest, type Connection } from "agents";
 import { generateText } from "ai";
+import { VoiceTrace, generationUsage, type TracingEnv } from "./lib/tracing";
 import { createAI } from "agents/models/ai-sdk";
+import { synthesizeDialogueAudio } from "./lib/elevenlabs-tts";
 import {
   resolveTenant,
   getGlobalVoiceConfig,
@@ -63,7 +65,7 @@ import {
   type DeepgramStreamConfig
 } from "./lib/deepgram-stt";
 
-export interface Env {
+export interface Env extends TracingEnv {
   DB: D1Database;
   TENANT_CONFIG: KVNamespace;
   AUDIO_BUCKET?: R2Bucket;
@@ -100,7 +102,7 @@ const MAX_TOOL_ROUNDS = 3;
 export class MizanVoiceAgent extends Agent<Env> {
   // Keep the active streaming session and conversation in memory for the lifetime
   // of this live call.
-  static options = { hibernate: false };
+  private releaseCallKeepAlive: (() => void) | null = null;
 
   private tenantSlug: string | null = null;
   private sessionId: string | null = null;
@@ -235,7 +237,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     });
   }
 
-  onConnect(connection: Connection) {
+  async onConnect(connection: Connection) {
     if (!this.initialized) {
       connection.send(JSON.stringify({ type: "error", message: "تعذر تهيئة المساعد الصوتي." }));
       connection.close(1011, "Agent initialization failed");
@@ -247,6 +249,8 @@ export class MizanVoiceAgent extends Agent<Env> {
       this.deepgramSession = null;
     }
     this.clearWhisperBuffer();
+    this.releaseCallKeepAlive?.();
+    this.releaseCallKeepAlive = await this.keepAlive();
     this.sessionClosed = false;
     this.activeConnection = connection;
 
@@ -284,13 +288,14 @@ export class MizanVoiceAgent extends Agent<Env> {
         },
         {
           model: this.env.DEEPGRAM_MODEL || "nova-3",
-          language: this.env.DEEPGRAM_LANGUAGE || "ar-EG",
           encoding: "linear16",
           sampleRate: 16000,
           channels: 1,
           endpointingMs: 300,
           utteranceEndMs: 1000,
-          ...this.deepgramConfigOverride
+          ...this.deepgramConfigOverride,
+          // Mizan voice calls are Arabic-only; never enable English or multi-language detection.
+          language: "ar"
         }
       );
       void this.deepgramSession.connect();
@@ -503,10 +508,12 @@ export class MizanVoiceAgent extends Agent<Env> {
     // Preserve Arabic-default response mode per Mizan Voice Gateway behavior
     this.responseLanguage = "ar";
 
+    const voiceTrace = VoiceTrace.start(this.env, this.sessionId || "unknown", this.tenantSlug || "unknown");
     try {
       connection.send(JSON.stringify({ type: "transcript", speaker: "caller", text: cleaned }));
-      await this.respondToTranscript(connection, cleaned);
+      await this.respondToTranscript(connection, cleaned, voiceTrace);
     } catch (error) {
+      voiceTrace.fail();
       console.error("Voice pipeline failed:", error);
       if (!this.sessionClosed) {
         try {
@@ -521,6 +528,7 @@ export class MizanVoiceAgent extends Agent<Env> {
         }
       }
     } finally {
+      await voiceTrace.finish();
       this.processingTurn = false;
       if (!this.sessionClosed) {
         try {
@@ -578,7 +586,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     };
   }
 
-  private async respondToTranscript(connection: Connection, transcript: string) {
+  private async respondToTranscript(connection: Connection, transcript: string, voiceTrace: VoiceTrace) {
     if (this.sessionClosed || !this.tenantSlug || !this.sessionId) return;
     const turnStart = Date.now();
     this.turnCount++;
@@ -598,12 +606,12 @@ export class MizanVoiceAgent extends Agent<Env> {
     if (callerIdentity.gender !== "unknown") toolDeps.ctx.caller.gender = callerIdentity.gender;
 
     // 1. Run Conversation Manager turn ingestion (state transitions, slot validation, confirmation guards, actions)
-    const { outcomes } = await ingestCallerUtterance(
+    const { outcomes } = await voiceTrace.step("manage-conversation", "tool", () => ingestCallerUtterance(
       toolDeps,
       this.cmSession,
       transcript,
       callerIdentity.name
-    );
+    ));
     for (const outcome of outcomes) {
       if (outcome.rejected) {
         this.metrics.slotRejections += outcome.rejected;
@@ -614,7 +622,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     const collectedPhone = this.cmSession.slots.phone?.value ?? null;
     if (collectedPhone && toolDeps.ctx.callerPhone !== collectedPhone) {
       toolDeps.ctx.callerPhone = collectedPhone;
-      const crmMatch = await lookupCaller(this.env.DB, this.tenantSlug, collectedPhone);
+      const crmMatch = await voiceTrace.step("lookup-caller", "retriever", () => lookupCaller(this.env.DB, this.tenantSlug!, collectedPhone));
       if (crmMatch) {
         toolDeps.ctx.callerType = crmMatch.callerType;
         toolDeps.ctx.caller.lastSummary = crmMatch.crm.last_call_summary;
@@ -648,7 +656,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       const escalationHint = this.escalationPhone ? ` أو تواصل فوراً مع طوارئ المكان على ${this.escalationPhone}` : "";
       reply = `سلامتك، الأعراض دي محتاجة تدخل طبي فوري. من فضلك اتصل بالإسعاف حالاً على رقم 123 أو توجه لأقرب مستشفى طوارئ${escalationHint}.`;
     } else {
-      const activeLearnings = await fetchActiveLearnings(this.env.DB, this.tenantSlug, 6);
+      const activeLearnings = await voiceTrace.step("retrieve-learnings", "retriever", () => fetchActiveLearnings(this.env.DB, this.tenantSlug!, 6));
       const liveState = renderLiveState(this.cmSession, toolDeps.ctx, this.intents);
       const systemPrompt = buildManagedSystemPrompt({
         globalPrompt: this.globalPrompt,
@@ -667,26 +675,26 @@ export class MizanVoiceAgent extends Agent<Env> {
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         try {
           const ai = createAI({ binding: this.env.AI });
-          const result = await generateText({
-            model: ai(this.env.PRIMARY_LLM),
+          const result = await voiceTrace.step("generate-response", "generation", () => generateText({
+            model: ai.languageModel(this.env.PRIMARY_LLM),
             system: systemPrompt,
             messages: [...recentMessages, { role: "user", content: transcript }],
             temperature: 0,
             maxOutputTokens: 220
-          });
+          }), { "langfuse.observation.model.name": this.env.PRIMARY_LLM, "langfuse.observation.metadata.round": round }, generationUsage);
           reply = result.text.trim();
           this.metrics.llmConsecutive = 0;
         } catch (primaryError) {
           console.error("Primary LLM failed:", primaryError);
           try {
             const ai = createAI({ binding: this.env.AI });
-            const result = await generateText({
-              model: ai(this.env.FALLBACK_LLM),
+            const result = await voiceTrace.step("generate-fallback-response", "generation", () => generateText({
+              model: ai.languageModel(this.env.FALLBACK_LLM),
               system: systemPrompt,
               messages: [...recentMessages, { role: "user", content: transcript }],
               temperature: 0.4,
               maxOutputTokens: 220
-            });
+            }), { "langfuse.observation.model.name": this.env.FALLBACK_LLM, "langfuse.observation.metadata.round": round }, generationUsage);
             reply = result.text.trim();
             this.metrics.llmConsecutive = 0;
           } catch (fallbackError) {
@@ -711,12 +719,12 @@ export class MizanVoiceAgent extends Agent<Env> {
             input?: Record<string, unknown>;
           };
           if (parsedTool.name) {
-            const outcome = await executeTool(
+            const outcome = await voiceTrace.step("execute-conversation-tool", "tool", () => executeTool(
               toolDeps,
               this.cmSession,
-              parsedTool.name,
+              parsedTool.name!,
               parsedTool.input ?? {}
-            );
+            ));
             if (outcome.rejected) this.metrics.slotRejections += outcome.rejected;
           }
         } catch {
@@ -760,6 +768,11 @@ export class MizanVoiceAgent extends Agent<Env> {
     this.conversation.push({ role: "user", content: transcript }, { role: "assistant", content: reply });
     if (this.conversation.length > 20) this.conversation = this.conversation.slice(-20);
 
+    voiceTrace.metadata({
+      "langfuse.observation.input": JSON.stringify({ language: this.responseLanguage }),
+      "langfuse.observation.output": JSON.stringify({ state: this.cmSession.state, handoff: Boolean(this.cmSession.handoff) }),
+      "langfuse.observation.metadata.turn_index": this.turnCount
+    });
     const latency = Date.now() - turnStart;
     this.turnCount++;
 
@@ -792,14 +805,23 @@ export class MizanVoiceAgent extends Agent<Env> {
     connection.send(JSON.stringify({ type: "status", status: "speaking" }));
 
     try {
-      const audio = await this.synthesizeElevenLabsAudio(reply);
+      const audio = await voiceTrace.step("synthesize-speech", "span", () => this.synthesizeElevenLabsAudio(reply), {}, (audio) => ({ "langfuse.observation.metadata.audio_bytes": audio.byteLength }));
       if (this.sessionClosed) return;
       connection.send(audio);
       connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength }));
     } catch (ttsError) {
-      console.error("ElevenLabs TTS failed:", ttsError);
+      const ttsDiagnostic = (ttsError instanceof Error ? ttsError.message : String(ttsError))
+        .replace(/(xi-api-key\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]")
+        .slice(0, 300);
+      voiceTrace.metadata({ "langfuse.observation.metadata.tts_failed": true });
+      console.error("ElevenLabs TTS failed:", ttsDiagnostic);
       if (!this.sessionClosed) {
-        connection.send(JSON.stringify({ type: "error", message: "تعذر تشغيل صوت ميزان من إعدادات HQ." }));
+        connection.send(JSON.stringify({
+          type: "error",
+          stage: "elevenlabs_tts",
+          message: "تعذر تشغيل صوت ميزان من إعدادات HQ.",
+          details: ttsDiagnostic
+        }));
       }
     }
 
@@ -824,65 +846,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     const config = this.elevenLabsConfig;
     if (!config?.voice_id) throw new Error("HQ ElevenLabs voice config is unavailable");
 
-    const endpoint = new URL("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(config.voice_id));
-    endpoint.searchParams.set("output_format", "mp3_44100_128");
-    let lastError = "ElevenLabs request failed";
-
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-      let response: Response;
-      try {
-        response = await fetch(endpoint.toString(), {
-          method: "POST",
-          headers: {
-            "xi-api-key": apiKey,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            text,
-            model_id: config.model_id,
-            language_code: this.responseLanguage === "en" ? "en" : "ar",
-            voice_settings: {
-              stability: config.stability,
-              similarity_boost: config.similarity_boost,
-              speed: config.speed,
-              use_speaker_boost: true
-            }
-          }),
-          signal: controller.signal
-        });
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-        if (attempt === 3) throw new Error("ElevenLabs network/timeout error: " + lastError);
-        await new Promise((resolve) => setTimeout(resolve, attempt * 300));
-        continue;
-      } finally {
-        clearTimeout(timeout);
-      }
-
-      if (response.ok) {
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType && !contentType.startsWith("audio/") && !contentType.includes("octet-stream")) {
-          throw new Error("ElevenLabs returned unexpected content type: " + contentType);
-        }
-        const audio = await response.arrayBuffer();
-        if (audio.byteLength < 100) throw new Error("ElevenLabs returned empty or incomplete MP3 audio");
-        return audio;
-      }
-
-      const errorBody = (await response.text()).slice(0, 300);
-      lastError = "ElevenLabs HTTP " + response.status + ": " + errorBody;
-      const retryable = response.status === 429 || response.status === 500 ||
-        response.status === 502 || response.status === 503 || response.status === 504;
-      if (!retryable || attempt === 3) throw new Error(lastError);
-      const retryAfter = Number(response.headers.get("retry-after") || 0);
-      const delayMs = retryAfter > 0
-        ? Math.min(3000, Math.max(250, retryAfter * 1000))
-        : attempt * 400;
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-    throw new Error(lastError);
+    return synthesizeDialogueAudio(text, apiKey, config, this.responseLanguage);
   }
 
   private buildSystemPrompt(language: "ar" | "en"): string {
@@ -905,6 +869,8 @@ export class MizanVoiceAgent extends Agent<Env> {
     if (this.sessionClosed) return;
     this.sessionClosed = true;
     this.activeConnection = null;
+    this.releaseCallKeepAlive?.();
+    this.releaseCallKeepAlive = null;
 
     if (this.deepgramSession) {
       this.deepgramSession.close();
@@ -963,7 +929,19 @@ export class MizanVoiceAgent extends Agent<Env> {
       };
 
       try {
-        const evaluation = await evaluateCall(this.env.AI, this.env.PRIMARY_LLM, evalState);
+        const evaluationTrace = VoiceTrace.start(this.env, this.sessionId, this.tenantSlug, "evaluate-call");
+        let evaluation;
+        try {
+          evaluation = await evaluateCall(this.env.AI, this.env.PRIMARY_LLM, evalState, evaluationTrace);
+          evaluationTrace.metadata({ "langfuse.observation.output": JSON.stringify({
+            score_overall: evaluation.score_overall,
+            score_dialect: evaluation.score_dialect,
+            score_respect: evaluation.score_respect,
+            score_flow: evaluation.score_flow
+          }) });
+        } finally {
+          await evaluationTrace.finish();
+        }
         await persistCallEvaluationAndLearnings(
           this.env.DB,
           this.sessionId,

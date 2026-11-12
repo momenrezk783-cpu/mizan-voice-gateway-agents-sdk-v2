@@ -79,7 +79,7 @@ run_worker_first = true
 [triggers]
 crons = ["*/5 * * * *"]
 
-# Observability — Logs + traces + issues
+# Observability — Logs + traces
 [observability]
 enabled = true
 head_sampling_rate = 1
@@ -95,8 +95,6 @@ enabled = true
 persist = true
 head_sampling_rate = 1
 
-[observability.issues]
-enabled = true
 
 # Secrets on `mizan-voice-gateway` (manage via `wrangler secret put`):
 #   SESSION_SECRET       — HMAC-SHA256 session token signing

@@ -9,18 +9,21 @@
     "db:migrate": "wrangler d1 execute mizan-portal-db --remote --file=./schema.sql",
     "db:migrate:001": "wrangler d1 execute mizan-portal-db --remote --file=./migration-001.sql",
     "db:migrate:002": "wrangler d1 execute mizan-portal-db --remote --file=./migration-002.sql",
-    "test": "node tests/deepgram-migration.test.mjs && node tests/conversation-manager.test.mjs",
+    "test": "node tests/deepgram-migration.test.mjs && node tests/conversation-manager.test.mjs && node tests/tracing.test.mjs && node tests/elevenlabs-tts.test.mjs",
     "types": "wrangler types"
   },
   "dependencies": {
+    "@langfuse/otel": "^6.1.1",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/sdk-trace-base": "^2.12.1",
     "agents": "latest",
     "ai": "latest"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "latest",
-    "wrangler": "^4.45.0",
-    "typescript": "latest",
     "@babel/core": "^8.1.0",
-    "@babel/preset-typescript": "^8.0.7"
+    "@babel/preset-typescript": "^8.0.7",
+    "@cloudflare/workers-types": "latest",
+    "typescript": "latest",
+    "wrangler": "^4.45.0"
   }
 }

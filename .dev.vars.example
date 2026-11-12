@@ -1,0 +1,5 @@
+# Copy to .dev.vars and fill in project keys from Langfuse Settings > API Keys.
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+# Use the base URL for your project's region or HTTPS self-hosted instance.
+LANGFUSE_BASE_URL=

@@ -133,3 +133,58 @@ mizan-voice-gateway-v2/
     └── css/
         └── voice.css         # Modern glassmorphic voice page
 ```
+
+## Langfuse tracing
+
+The voice agent exports one trace per accepted voice turn and a separate post-call
+quality evaluation trace. The call session ID groups them in Langfuse Sessions;
+tenant ID and environment are attached to every observation. Primary and fallback
+model attempts, conversation tools, retrieval and speech synthesis are nested
+under the turn. Model names and available AI SDK token usage are recorded.
+Workers AI post-call evaluation does not expose token usage through this path.
+Custom Workers AI models may need pricing configured in Langfuse for cost estimates.
+
+Configure `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL`.
+For local development, copy `.dev.vars.example` to `.dev.vars`. For production,
+use `npx wrangler secret put LANGFUSE_PUBLIC_KEY` and
+`npx wrangler secret put LANGFUSE_SECRET_KEY`; set `LANGFUSE_BASE_URL` to your
+project's regional HTTPS origin in Worker variables (or another Wrangler secret).
+Tracing stays disabled until all three are supplied. Never commit real keys.
+
+Trace content intentionally excludes transcripts, prompts, names, phone numbers,
+tool arguments, audio and raw exception messages because these calls may contain
+patient information. Inputs/outputs show structural summaries and quality scores.
+This limits content-based debugging and Langfuse judge evaluations; those require
+an explicit privacy-reviewed content capture policy. The existing call evaluator
+continues to operate normally. No caller identity is sent as a Langfuse user ID.
+
+Tracing uses `@langfuse/otel` 6.1.1 with a provider scoped to each turn, explicit
+parent contexts and awaited shutdown in the Durable Object handler. This avoids
+shared exporter I/O across WebSocket events and global tracer registration.
+Manual generation spans support both AI SDK calls and direct Workers AI calls
+without registering a process-wide framework integration. Export errors do not
+change model fallback or call results. A bounded export happens after audio is
+sent and can delay readiness for the next turn. Use Node 22.18+ (or Node 24.11+)
+for current dependencies and local checks.
+
+After configuring credentials, make a voice call, then inspect `process-voice-turn`
+and `evaluate-call` in Langfuse. Confirm session grouping, tenant/environment,
+parent-child relationships, fallback errors, token usage and absence of sensitive
+content. Local tracing tests validate the exported spans without credentials.
+
+## Voice deployment configuration
+
+Arabic speech recognition uses Deepgram `nova-3` with `language=ar`, 16 kHz mono
+linear PCM, 300 ms endpointing and a 1 second utterance-end window. Without a
+Deepgram key, the existing Workers AI Whisper fallback handles recognition.
+Speech synthesis uses the HQ-selected voice (default `MX8opBj7bbi4G2cE9j2w`)
+and `eleven_v4_turbo` over ElevenLabs Text to Dialogue WebSocket, returning MP3.
+Only the stability setting is sent according to the dialogue API schema; saved
+legacy speed, similarity boost and speaker boost settings are not forwarded.
+The voice connection holds an Agents SDK keep-alive reference until disconnect.
+
+Before deploying, authenticate Wrangler and check that the existing Worker has
+`ELEVENLABS_TTS_KEY` (or `ELEVENLABS_API_KEY`), `DEEPGRAM_API_KEY`, and the three
+`LANGFUSE_*` settings. Local `.env` and `.dev.vars` files do not upload production
+secrets. Review the effective HQ voice in the admin console; its saved voice ID
+is read from D1 and overrides the default for HQ calls.

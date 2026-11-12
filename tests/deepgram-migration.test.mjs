@@ -117,7 +117,7 @@ class MockDeepgramSocket {
 {
   const urlStr = buildDeepgramListenUrl({
     model: "nova-3",
-    language: "ar-EG",
+    language: "ar",
     encoding: "linear16",
     sampleRate: 16000,
     channels: 1,
@@ -127,7 +127,8 @@ class MockDeepgramSocket {
   const parsed = new URL(urlStr);
   assert.equal(parsed.origin + parsed.pathname, "https://api.deepgram.com/v1/listen");
   assert.equal(parsed.searchParams.get("model"), "nova-3");
-  assert.equal(parsed.searchParams.get("language"), "ar-EG");
+  assert.equal(parsed.searchParams.get("language"), "ar");
+  assert.deepEqual(parsed.searchParams.getAll("language_hint"), [], "Arabic-only mode must not send English language hints");
   assert.equal(parsed.searchParams.get("encoding"), "linear16");
   assert.equal(parsed.searchParams.get("sample_rate"), "16000");
   assert.equal(parsed.searchParams.get("channels"), "1");
@@ -387,6 +388,7 @@ class MockDeepgramSocket {
 
   assert.ok(!agentSource.includes("whisper-large-v3-turbo"), "Whisper STT must be removed from src/agent.ts");
   assert.ok(agentSource.includes("DeepgramStreamingSession"), "DeepgramStreamingSession must be integrated in src/agent.ts");
+  assert.match(agentSource, /language:\s*"ar"\s*\n\s*}\s*\)\s*;/, "Mizan Deepgram session must force Arabic-only language after all overrides");
   assert.ok(agentSource.includes("eleven_v4_turbo"), "ElevenLabs model_id eleven_v4_turbo must be preserved");
   assert.ok(tenantSource.includes("MX8opBj7bbi4G2cE9j2w"), "ElevenLabs voice ID MX8opBj7bbi4G2cE9j2w must be preserved in src/lib/tenant.ts");
   assert.ok(indexSource.includes("MX8opBj7bbi4G2cE9j2w"), "ElevenLabs voice ID MX8opBj7bbi4G2cE9j2w must be preserved in src/index.ts");

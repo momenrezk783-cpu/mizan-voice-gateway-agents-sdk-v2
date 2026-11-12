@@ -22,6 +22,7 @@ import {
   type LearningEvaluation
 } from "./db";
 import { cleanPromptLine } from "./prompt";
+import type { VoiceTrace } from "../tracing";
 
 export type ConversationEvaluation = LearningEvaluation & {
   score_dialect: number;
@@ -50,7 +51,8 @@ function clampScore(value: unknown, fallback: number): number {
 export async function evaluateCall(
   ai: Ai | undefined,
   modelId: string,
-  state: ConversationState
+  state: ConversationState,
+  tracing?: VoiceTrace
 ): Promise<ConversationEvaluation> {
   const personContext: PersonTitleContext = {
     role: "caller",
@@ -121,11 +123,14 @@ ${transcript}
 القواعد المستخلصة يجب أن تكون محددة وآمنة، ولا تحتوي بيانات شخصية أو ألفاظًا ممنوعة.`;
 
   try {
-    const response = (await ai.run(modelId as Parameters<Ai["run"]>[0], {
+    const generate = () => ai.run(modelId as Parameters<Ai["run"]>[0], {
       messages: [{ role: "user", content: prompt }],
       max_tokens: 500,
       temperature: 0.1
-    })) as { response?: string };
+    });
+    const response = (await (tracing
+      ? tracing.step("evaluate-conversation", "generation", generate, { "langfuse.observation.model.name": modelId })
+      : generate())) as { response?: string };
 
     const raw = String(response?.response ?? "").trim();
     const match = raw.match(/\{[\s\S]*\}/u);

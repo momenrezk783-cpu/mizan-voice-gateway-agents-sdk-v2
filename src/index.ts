@@ -203,7 +203,7 @@ async function handleVoiceWebSocket(
 
   // routeAgentRequest handles DO instantiation + WebSocket upgrade
   // It auto-maps the MIZAN_VOICE_AGENT binding to /agents/mizan-voice-agent/{name}
-  return routeAgentRequest(agentRequest, env) ?? new Response("Agent not found", { status: 404 });
+  return (await routeAgentRequest(agentRequest, env)) ?? new Response("Agent not found", { status: 404 });
 }
 
 // ---------------------------------------------------------------------------
@@ -866,7 +866,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
             if(m.type==='control'&&m.command==='barge_in'){stopPlayback();s.textContent='سمعتك — كمل كلامك';s.className='st';}
             if(m.type==='transcript')addTurn(m.speaker,m.text);
             if(m.type==='error'){
-              console.error('Voice agent error:',m.message);
+              console.error('Voice agent error:',{stage:m.stage||'unknown',message:m.message,details:m.details||null});
               s.textContent=m.message||'حدث خطأ في المساعد الصوتي';
               s.className='st error';
             }

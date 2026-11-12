@@ -521,11 +521,7 @@ export class DeepgramStreamingSession {
 
     if (this.ws && this.ws.readyState === 1) {
       try {
-        this.ws.send(
-          pcmBytes.byteOffset === 0 && pcmBytes.byteLength === pcmBytes.buffer.byteLength
-            ? pcmBytes.buffer
-            : pcmBytes.slice().buffer
-        );
+        this.ws.send(pcmBytes);
         return true;
       } catch (err) {
         console.error("Deepgram audio send failed:", err);
@@ -563,7 +559,7 @@ export class DeepgramStreamingSession {
     this.pendingAudioBytes = 0;
     for (const chunk of queued) {
       try {
-        this.ws.send(chunk.buffer);
+        this.ws.send(chunk);
       } catch {
         break;
       }
