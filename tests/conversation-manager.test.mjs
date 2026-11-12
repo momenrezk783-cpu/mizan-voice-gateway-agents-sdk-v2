@@ -563,6 +563,7 @@ await test("applies schema.sql + migrations 001/002/003 and executes all D1 quer
     d1.execSqlFile(path.join(rootDir, "migration-002.sql"));
     d1.execSqlFile(path.join(rootDir, "migration-003.sql"));
     d1.execSqlFile(path.join(rootDir, "migration-004.sql"));
+    d1.execSqlFile(path.join(rootDir, "migration-005.sql"));
 
     // Login throttling storage: insert, increment, and reset an expired window.
     const now = Math.floor(Date.now() / 1000);

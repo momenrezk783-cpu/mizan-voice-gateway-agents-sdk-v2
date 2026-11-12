@@ -20,6 +20,9 @@ import { parseSearchInput, searchClientData, searchAdminData } from "./lib/searc
 import { loginRateKey, loginThrottleCheck, recordFailedLogin } from "./lib/login-throttle";
 import { summarizeLatency } from "./lib/operational-metrics";
 import { isRequestStatus, listTenantRequests, updateTenantRequestStatus } from "./lib/crm";
+import {MIZAN_PROFILE} from "./lib/mizan-profile";
+import {submitQuote,listQuotes,updateQuote} from "./lib/quote-requests";
+import {readCallContact} from "./lib/private-contact";
 import { processBackgroundMessage } from "./lib/background";
 import { getTenantMonthlyUsage, getUtcMonthBounds } from "./lib/billing";
 
@@ -118,9 +121,9 @@ export default {
     }
 
     // Public patient voice page: /c/:slug
-    const publicMatch = url.pathname.match(/^\/c\/([\w-]+)\/?$/);
+    const publicMatch = url.pathname.match(/^\/c\/([\w-]+)(\/embed)?\/?$/);
     if (publicMatch) {
-      return handlePublicVoicePage(request, env, publicMatch[1]);
+      return handlePublicVoicePage(request, env, publicMatch[1], Boolean(publicMatch[2]));
     }
 
     // Serve updated Mizan Enterprise AI SaaS UI routes directly with no-cache headers
@@ -170,6 +173,7 @@ export default {
     ctx.waitUntil(Promise.all([
       expireStaleSessions(env),
       expirePilots(env),
+      env.DB.prepare(`DELETE FROM quote_intake_limits WHERE reset_at < unixepoch() - 86400`).run(),
       env.DB.prepare(`DELETE FROM voice_admissions WHERE created_at < unixepoch() - 86400`).run(),
     ]));
   },
@@ -281,6 +285,9 @@ async function handleApi(
       const ticket = await reserveVoiceCall(env.DB,tenant.slug,ipKey,tenant.max_concurrent_sessions,url.origin,env.SESSION_SECRET);
       return ticket ? json(ticket) : json({error:"Call capacity or hourly budget exceeded"},429,{"Retry-After":"60"});
     }
+    if (path === "/api/public/quote-requests" && request.method === "POST") {
+      return json(await submitQuote(await request.json<Record<string,unknown>>(),request.headers.get("CF-Connecting-IP") || "unknown",env),202);
+    }
     // Portal auth
     if (path === "/api/client/auth/login" && request.method === "POST")
       return await portalLogin(request, env);
@@ -299,7 +306,7 @@ async function handleApi(
 
     return json({ error: "Not found" }, 404);
   } catch (err) {
-    if (err instanceof InputError) return json({error:err.message},err.status);
+    if (err instanceof InputError) return json({error:err.message},err.status,err.status===429 ? {"Retry-After":"900"} : {});
     if (err instanceof SyntaxError) return json({ error: "Malformed JSON" }, 400);
     console.error("API error:", err);
     return json({ error: "Internal server error" }, 500);
@@ -427,9 +434,10 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
 
     if (!session) return json({ error: "Session not found" }, 404);
 
-    let callerName = null, callerPhone = null;
-    if (session.caller_name_enc) callerName = await decryptPII(session.caller_name_enc as string, env);
-    if (session.caller_phone_enc) callerPhone = await decryptPII(session.caller_phone_enc as string, env);
+    const privateContact=await readCallContact(env.DB,slug,sessionId,env.CONTACT_ENC_KEY);
+    let callerName: string|null = privateContact?.name ?? null, callerPhone: string|null = privateContact?.phone ?? null;
+    if (!privateContact && session.caller_name_enc) callerName = await decryptPII(session.caller_name_enc as string, env);
+    if (!privateContact && session.caller_phone_enc) callerPhone = await decryptPII(session.caller_phone_enc as string, env);
 
     const turns = await env.DB.prepare(
       `SELECT turn_index, speaker, transcript_redacted, latency_ms, created_at
@@ -440,7 +448,7 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
       session: { id: session.id, call_status: session.call_status,
         selected_doctor: session.selected_doctor, selected_slot: session.selected_slot,
         booking_confirmed: session.booking_confirmed, started_at: session.started_at,
-        ended_at: session.ended_at, caller_name: callerName, caller_phone: callerPhone },
+        ended_at: session.ended_at, caller_name: callerName, caller_phone: callerPhone, caller_email: privateContact?.email ?? null },
       turns: turns.results,
     });
   }
@@ -606,6 +614,12 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
 
   const path = url.pathname;
 
+  if (path === "/api/admin/quote-requests" && request.method === "GET") return json({requests:await listQuotes(env,url.searchParams.get("status") || undefined)});
+  const quoteMatch=path.match(/^\/api\/admin\/quote-requests\/([a-f0-9-]{36})$/u);
+  if (quoteMatch && request.method === "PATCH") {
+    const body=await request.json<{status?:unknown}>();
+    return await updateQuote(env.DB,quoteMatch[1],body.status) ? json({ok:true}) : json({error:"Request not found"},404);
+  }
   if (path === "/api/admin/search" && request.method === "GET") {
     const params = parseSearchInput(url, ["all"]);
     if ("error" in params) return json({ error: params.error }, params.status);
@@ -851,11 +865,25 @@ async function handleEmbedWidget(request: Request, env: Env, slug: string): Prom
   const accent = safeAccent(tenant.theme_color);
   const callUrl = `https://mizanconsult.com/c/${slug}`;
 
-  const js = `(function(){var d=document,s=d.createElement('style'),b=d.createElement('a');
-s.textContent='.mz-fab{position:fixed;bottom:24px;left:24px;width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,${accent},${shadeColor(accent,40)});display:flex;align-items:center;justify-content:center;box-shadow:0 8px 24px ${hexToRgba(accent,0.4)};z-index:99999;cursor:pointer;transition:transform .3s ease;text-decoration:none}.mz-fab:hover{transform:scale(1.1)}.mz-fab svg{width:28px;height:28px}.mz-fab::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid ${accent};animation:mz-pulse 2s ease-out infinite}@keyframes mz-pulse{0%{transform:scale(1);opacity:.6}100%{transform:scale(1.5);opacity:0}}';
-d.head.appendChild(s);b.href='${callUrl}';b.target='_blank';b.rel='noopener';b.className='mz-fab';
-b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
-d.body.appendChild(b);})();`;
+  const allowedOrigins=[new URL(request.url).origin];
+  if(tenant.domain){try{const origin=new URL("https://"+tenant.domain);if(origin.hostname===tenant.domain)allowedOrigins.push(origin.origin);}catch{}}
+  const embedPage=new URL("/c/"+slug+"/embed",request.url).href;
+  const js = `(function(){
+    var d=document,allowed=${JSON.stringify(allowedOrigins)},url=${JSON.stringify(embedPage)},callUrl=${JSON.stringify(callUrl)};
+    if(d.querySelector('[data-mizan-widget="${slug}"]'))return;
+    var launch=d.createElement('button'),panel=d.createElement('section'),close=d.createElement('button'),frame=null,fallback=d.createElement('a');
+    launch.type='button';launch.textContent='تحدث مع المساعد';launch.dataset.mizanWidget='${slug}';launch.style.cssText='position:fixed;bottom:22px;left:22px;z-index:2147483000;border:0;border-radius:24px;padding:15px 20px;background:${accent};color:white;font:16px Arial;cursor:pointer';
+    launch.setAttribute('aria-expanded','false');launch.setAttribute('aria-label','فتح نافذة المكالمة');
+    panel.hidden=true;panel.setAttribute('aria-label','نافذة مكالمة ميزان');panel.style.cssText='position:fixed;bottom:80px;left:12px;width:min(430px,calc(100vw - 24px));height:min(720px,calc(100dvh - 100px));background:white;border:1px solid #bdd4dc;border-radius:16px;z-index:2147483001;overflow:hidden;box-shadow:0 12px 48px #0004';
+    close.type='button';close.textContent='إغلاق المكالمة';close.style.cssText='height:36px;width:100%;cursor:pointer';
+    fallback.href=callUrl;fallback.target='_blank';fallback.rel='noopener';fallback.textContent='فتح صفحة الاتصال المستقلة';fallback.style.cssText='display:block;text-align:center;height:30px;font:14px Arial';
+    panel.append(close,fallback);d.body.append(launch,panel);
+    function hide(){if(frame){frame.src='about:blank';frame.remove();frame=null}panel.hidden=true;launch.setAttribute('aria-expanded','false');launch.focus()}
+    close.onclick=hide;
+    launch.onclick=function(){if(!panel.hidden){hide();return}panel.hidden=false;launch.setAttribute('aria-expanded','true');if(allowed.indexOf(location.origin)<0){fallback.textContent='هذا النطاق غير مهيأ للتضمين؛ افتح صفحة الاتصال المستقلة';close.focus();return}frame=d.createElement('iframe');frame.src=url;frame.title='مكالمة المساعد الصوتي';frame.allow='microphone';frame.referrerPolicy='no-referrer';frame.style.cssText='display:block;width:100%;height:calc(100% - 66px);border:0';panel.appendChild(frame);close.focus()};
+    panel.addEventListener('keydown',function(e){if(e.key==='Escape')hide()});
+  })();`;
+
 
   return new Response(js, {
     headers: {
@@ -884,7 +912,7 @@ function safeLogoUrl(raw: string | null | undefined, base: string): string | nul
   catch { return null; }
 }
 
-async function handlePublicVoicePage(request: Request, env: Env, slug: string): Promise<Response> {
+async function handlePublicVoicePage(request: Request, env: Env, slug: string, embedded=false): Promise<Response> {
   const tenant = await resolveTenant(slug, env);
   if (!tenant) {
     return new Response("Organization not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
@@ -909,7 +937,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0B2D4B">
   <title>${safeName} — المساعد الصوتي المباشر</title>
   <meta property="og:title" content="${safeName} — مساعد صوتي">
@@ -935,14 +963,16 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   <div class="vp" id="orbWrapper">
     <div class="top-row">
       <a href="/" class="lg">
-        <div class="lm"><img src="/images/mizan-hq-logo.webp" alt="Mizan HQ" style="width:40px;height:40px;object-fit:contain;background:#fff;border-radius:8px"></div>
+        <div class="lm" aria-hidden="true"><span style="font-size:24px">م</span></div>
         ميزان هيد كوارتر
       </a>
       <button type="button" class="mz-tour-trigger-btn" onclick="MizanOnboarding.start('call')">🎯 جولة تعريفية</button>
     </div>
     <div class="av">${avatarContent}</div>
     <h1>${safeName}</h1>
-    <p class="tag">المساعد جاهز يرد على حضرتك</p>
+    <p class="tag">المساعد جاهز يرد على استفساراتك</p>
+    <section class="privacy-disclosure" aria-label="خصوصية المكالمة"><p>${escapeHtml(MIZAN_PROFILE.privacyNotice)}</p><label><input type="checkbox" id="voice-privacy-ack"> فهمت التنبيه وأرغب في بدء المكالمة.</label><p><a href="/privacy" target="_blank" rel="noopener">سياسة الخصوصية</a> · <a href="/terms" target="_blank" rel="noopener">شروط الاستخدام</a></p></section>
+    <p id="privacy-call-status" role="status" aria-live="polite"></p>
     <span class="st" id="status">متصل وجاهز</span>
     <div class="wave idle" id="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
     <button class="mic" id="callBtn" onclick="toggleCall()" aria-label="ابدأ المكالمة">
@@ -958,6 +988,8 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         <span id="muteLabel">كتم</span>
       </button>
     </div>
+    <button type="button" class="mute-button" id="open-contact" hidden onclick="requestPrivateContact()">إدخال بيانات الطلب كتابة</button>
+    <dialog id="private-contact" aria-labelledby="private-contact-title"><h2 id="private-contact-title">بيانات التواصل الآمنة</h2><p class="privacy-notice">الميكروفون متوقف مؤقتًا. ميزان مش هيسمعك وإنت بتملا الاستمارة.</p><form id="private-contact-form"><label>الاسم<input name="name" autocomplete="name" required minlength="2" maxlength="80"></label><label>رقم الموبايل المصري<input name="phone" type="tel" autocomplete="tel" dir="ltr" required maxlength="30"></label><label>البريد الإلكتروني (اختياري)<input name="email" type="email" autocomplete="email" dir="ltr" maxlength="254"></label><label class="privacy-confirm"><input name="confirmed" type="checkbox" required> راجعت البيانات وأؤكد استخدامها لاستكمال طلبي.</label><p>تُحفظ الحقول مشفّرة ولا تُرسل كنص إلى نموذج المحادثة أو مولّد الصوت. <a href="/privacy" target="_blank" rel="noopener">التفاصيل</a></p><p id="contact-feedback" role="status" aria-live="polite"></p><div class="privacy-actions"><button type="submit" id="contact-submit">حفظ واستكمال المكالمة</button><button type="button" id="contact-cancel">إلغاء واستكمال الاستفسارات</button></div></form></dialog>
     <div class="card" id="transcriptContainer">
       <div>اسأل عن مواعيد العمل، أو الخدمات المتاحة، أو احجز ميعاد، أو اعرف مكان الفروع.</div>
       <div class="transcript" id="transcript"></div>
@@ -965,11 +997,27 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
     <div class="ft">بدعم من <a href="https://mizanconsult.com">ميزان هيد كوارتر</a></div>
   </div>
   <script src="/js/onboarding.js"></script>
+  <script src="/js/private-contact-ui.js"></script>
   <script>
     const TENANT_SLUG=${JSON.stringify(tenant.slug)},SESSION_ID=${JSON.stringify(sessionId)},WS_BASE=${JSON.stringify(wsBase)};
-    let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,timerInt=null,startT=null,callAttempt=0,playbackTime=0;
+    let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,audioSink=null,timerInt=null,startT=null,callAttempt=0,playbackTime=0;
+    const privateContact=MizanPrivateContact.mount({
+      send:message=>{if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(message))},
+      pause:()=>{if(stream)stream.getAudioTracks().forEach(track=>{track.enabled=false});if(audioSource)audioSource.disconnect();if(audioNode){audioNode.port.onmessage=null;audioNode.disconnect();audioNode=null}if(audioSink){audioSink.disconnect();audioSink=null}},
+      resume:()=>{if(calling&&stream){stream.getAudioTracks().forEach(track=>{track.enabled=!muted});connectMicrophone();document.getElementById('status').textContent='متصل — تحدث الآن'}},
+      isActive:()=>calling
+    });
+    function requestPrivateContact(){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'contact_request'}))}
+    function connectMicrophone(){
+      if(!audioCtx||!audioSource||privateContact.paused)return;
+      const fresh=audioNode=new AudioWorkletNode(audioCtx,'pcm-processor');
+      audioSource.connect(fresh);
+      audioSink=audioCtx.createGain();audioSink.gain.value=0;fresh.connect(audioSink);audioSink.connect(audioCtx.destination);
+      fresh.port.onmessage=e=>{if(audioNode!==fresh||privateContact.paused||!calling||!ws||ws.readyState!==WebSocket.OPEN||muted)return;if(audioCtx.currentTime<playbackTime+0.25)return;ws.send(e.data)};
+    }
     async function toggleCall(){calling?endCall():startCall()}
     async function startCall(){
+      if(!document.getElementById('voice-privacy-ack').checked){document.getElementById('status').textContent='اقرأ تنبيه الخصوصية وأكد الموافقة قبل تشغيل الميكروفون.';document.getElementById('voice-privacy-ack').focus();return}
       const attempt=++callAttempt;
       const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
       b.classList.add('connecting');ow.classList.add('connecting');s.textContent='يرجى السماح باستخدام الميكروفون...';s.className='st connecting';
@@ -985,14 +1033,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         const workletCode="const CHUNK_SAMPLES=2048;class PCMProcessor extends AudioWorkletProcessor{constructor(){super();this._buffer=new Int16Array(CHUNK_SAMPLES);this._offset=0;this.port.onmessage=e=>{if(e.data&&e.data.type===\x27flush\x27&&this._offset>0){const s=this._buffer.slice(0,this._offset);this.port.postMessage(s.buffer,[s.buffer]);this._offset=0}}}process(inputs){const input=inputs[0];if(input&&input[0]){const f=input[0];for(let i=0;i<f.length;i++){const r=f[i],s=Number.isFinite(r)?Math.max(-1,Math.min(1,r)):0;this._buffer[this._offset++]=s<0?s*0x8000:s*0x7FFF;if(this._offset>=CHUNK_SAMPLES){const o=this._buffer.slice(0,CHUNK_SAMPLES);this.port.postMessage(o.buffer,[o.buffer]);this._offset=0}}}return true}}registerProcessor(\x27pcm-processor\x27,PCMProcessor);";const wbUrl=URL.createObjectURL(new Blob([workletCode],{type:'application/javascript'}));try{await audioCtx.audioWorklet.addModule(wbUrl)}catch{await audioCtx.audioWorklet.addModule('/pcm-processor.js')}finally{URL.revokeObjectURL(wbUrl)}
         if(attempt!==callAttempt)return;
         audioSource=audioCtx.createMediaStreamSource(stream);
-        audioNode=new AudioWorkletNode(audioCtx,'pcm-processor');
-        // Connect mic source ONLY to the worklet node — never to audioCtx.destination (prevents mic-to-speaker feedback)
-        audioSource.connect(audioNode);
-        audioNode.port.onmessage=e=>{
-          if(attempt!==callAttempt||!calling||!ws||ws.readyState!==WebSocket.OPEN||muted)return;
-          if(audioCtx&&audioCtx.currentTime<playbackTime+0.25)return;
-          ws.send(e.data);
-        };
+        connectMicrophone();
         s.textContent='جاري الاتصال بالمساعد...';
         const ticketResponse=await fetch('/api/voice/token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug:TENANT_SLUG})});
         if(!ticketResponse.ok)throw new Error(ticketResponse.status===429?'سعة المكالمات ممتلئة، حاول لاحقاً':'تعذر السماح بالمكالمة');
@@ -1003,34 +1044,36 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         socket.binaryType='arraybuffer';
         socket.onopen=()=>{
           if(attempt!==callAttempt){socket.close();return}
-          calling=true;b.classList.remove('connecting');b.classList.add('active');ow.classList.remove('connecting');ow.classList.add('active');
+          calling=true;document.getElementById('open-contact').hidden=false;b.classList.remove('connecting');b.classList.add('active');ow.classList.remove('connecting');ow.classList.add('active');
           s.textContent='متصل — تحدث الآن';s.className='st';c.classList.add('visible');w.classList.remove('idle');
           startT=Date.now();timerInt=setInterval(()=>{const e=Math.floor((Date.now()-startT)/1000);document.getElementById('timer').textContent=String(Math.floor(e/60)).padStart(2,'0')+':'+String(e%60).padStart(2,'0')},1000);
         };
         socket.onmessage=e=>{
+          if(attempt!==callAttempt||!calling)return;
           if(e.data instanceof ArrayBuffer){play(e.data);return}
           try{
             const m=JSON.parse(e.data);
+            if(privateContact.handle(m))return;
             if(m.type==='transcript')addTurn(m.speaker,m.text);
             if(m.type==='error'){
               console.error('Voice agent error:',m.message);
               s.textContent=m.message||'حدث خطأ في المساعد الصوتي';
               s.className='st error';
             }
-            if(m.type==='status'&&m.status==='stt_reconnecting'){
+            if(!privateContact.paused&&m.type==='status'&&m.status==='stt_reconnecting'){
               s.textContent='نعيد الاتصال بخدمة التعرف الصوتي...';s.className='st connecting';
             }
-            if(m.type==='status'&&m.status==='stt_unavailable'){
+            if(!privateContact.paused&&m.type==='status'&&m.status==='stt_unavailable'){
               s.textContent='خدمة التعرف الصوتي غير متاحة حالياً. أنهِ الاتصال وحاول مجدداً.';s.className='st error';
             }
-            if(m.type==='status'&&m.status==='stt_connected'){
+            if(!privateContact.paused&&m.type==='status'&&m.status==='stt_connected'){
               s.textContent='متصل — تحدث الآن';s.className='st';
             }
-            if(m.type==='status'&&m.status==='listening'){
+            if(!privateContact.paused&&m.type==='status'&&m.status==='listening'){
               s.textContent='متصل — تحدث الآن';
               s.className='st';
             }
-            if(m.type==='status'&&m.status==='audio_sent'){
+            if(!privateContact.paused&&m.type==='status'&&m.status==='audio_sent'){
               console.info('Agent audio received:',m.bytes,'bytes');
             }
           }catch(err){console.warn('Unrecognized voice message:',err)}
@@ -1042,10 +1085,10 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         if(attempt===callAttempt){endCall();s.textContent=err.name==='NotAllowedError'?'لم يتم السماح باستخدام الميكروفون':err.message||'تعذر تهيئة الصوت';s.className='st error'}
       }
     }
-    function endCall(errorText){callAttempt++;calling=false;const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
+    function endCall(errorText){callAttempt++;calling=false;privateContact.end();document.getElementById('open-contact').hidden=true;const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
       b.classList.remove('active','connecting');ow.classList.remove('active','connecting');s.textContent=errorText||'انتهت المكالمة — جاهز لاتصال جديد';s.className=errorText?'st error':'st';c.classList.remove('visible');w.classList.add('idle');playbackTime=0;muted=false;document.getElementById('muteBtn').classList.remove('muted');document.getElementById('muteLabel').textContent='كتم';
-      if(timerInt){clearInterval(timerInt);timerInt=null}if(ws){const oldWs=ws;ws=null;if(oldWs.readyState===WebSocket.CONNECTING||oldWs.readyState===WebSocket.OPEN)oldWs.close()}if(audioNode){audioNode.disconnect();audioNode=null}if(audioSource){audioSource.disconnect();audioSource=null}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}if(audioCtx){const oldCtx=audioCtx;audioCtx=null;oldCtx.close().catch(()=>{})}}
-    function toggleMute(){muted=!muted;const b=document.getElementById('muteBtn'),l=document.getElementById('muteLabel');muted?(b.classList.add('muted'),l.textContent='مكتوم'):(b.classList.remove('muted'),l.textContent='كتم')}
+      if(timerInt){clearInterval(timerInt);timerInt=null}if(ws){const oldWs=ws;ws=null;if(oldWs.readyState===WebSocket.CONNECTING||oldWs.readyState===WebSocket.OPEN)oldWs.close()}if(audioNode){audioNode.disconnect();audioNode=null}if(audioSink){audioSink.disconnect();audioSink=null}if(audioSource){audioSource.disconnect();audioSource=null}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}if(audioCtx){const oldCtx=audioCtx;audioCtx=null;oldCtx.close().catch(()=>{})}}
+    function toggleMute(){muted=!muted;if(stream)stream.getAudioTracks().forEach(track=>{track.enabled=!muted&&!privateContact.paused});const b=document.getElementById('muteBtn'),l=document.getElementById('muteLabel');muted?(b.classList.add('muted'),l.textContent='مكتوم'):(b.classList.remove('muted'),l.textContent='كتم')}
     function addTurn(sp,txt){const t=document.getElementById('transcript'),d=document.createElement('div');d.className='turn '+sp;
       const l=document.createElement('div');l.className='turn-label';l.textContent=sp==='caller'?'المتصل':'المساعد';
       const c=document.createElement('div');c.textContent=txt;d.appendChild(l);d.appendChild(c);t.appendChild(d);t.scrollTop=t.scrollHeight}
@@ -1061,7 +1104,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
         source.start(startAt);
         playbackTime=startAt+buf.duration;
         const s=document.getElementById('status');
-        s.textContent='المساعد بيتكلم...';
+        s.textContent=privateContact.paused?'الميكروفون متوقف أثناء النموذج':'المساعد بيتكلم...';
         s.className='st';
       }catch(err){
         console.error('Agent audio playback failed:',err);
@@ -1073,7 +1116,14 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string): 
   </script>
 </body></html>`;
 
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...securityHeaders } });
+  const headers: Record<string,string>={"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store",...securityHeaders};
+  if(embedded){
+    delete headers["X-Frame-Options"];
+    const origins=[new URL(request.url).origin];
+    if(tenant.domain){try{const origin=new URL("https://"+tenant.domain);if(origin.hostname===tenant.domain)origins.push(origin.origin);}catch{}}
+    headers["Content-Security-Policy"]="base-uri 'self'; object-src 'none'; form-action 'self'; frame-ancestors "+origins.join(" ");
+  }
+  return new Response(html,{headers});
 }
 
 // ---------------------------------------------------------------------------

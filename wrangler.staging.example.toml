@@ -50,7 +50,7 @@ dataset = "mizan_voice_latency_staging"
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/c/*", "/api/*", "/agents/*", "/embed/*", "/pcm-processor.js"]
+run_worker_first = ["/", "/about", "/about.html", "/privacy", "/privacy.html", "/terms", "/terms.html", "/c/*", "/api/*", "/agents/*", "/embed/*", "/pcm-processor.js"]
 
 [triggers]
 crons = ["*/5 * * * *"]

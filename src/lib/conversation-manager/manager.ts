@@ -603,6 +603,7 @@ export interface ActionRunResult {
 }
 
 export interface ToolDeps {
+  secureContact?: boolean;
   ctx: CallContext;
   intents: IntentSpec[];
   runAction(action: string, slots: Record<string, string>, idempotencyKey: string): Promise<ActionRunResult>;
@@ -691,6 +692,7 @@ export async function executeTool(
         }
       } else {
         for (const [k, raw] of Object.entries(slots)) {
+          if (d.secureContact && ["name","phone","email"].includes(k)) { rejected[k]="Use the private on-screen contact form"; continue; }
           const spec = sp.slots.find((x) => x.name === k);
           if (!spec) {
             rejected[k] = "not a field for this intent";
@@ -715,6 +717,7 @@ export async function executeTool(
         }
 
         for (const k of confirmed) {
+          if (d.secureContact && ["name","phone","email"].includes(k)) { rejected[k]="Confirm contact data in the private form"; continue; }
           const cur = s.slots[k];
           if (!cur) {
             rejected[k] = "no value recorded yet";
@@ -948,14 +951,14 @@ export async function ingestCallerUtterance(
   const explanationOnly = isInformationalRequest(utterance);
   const slotsToUpdate: Record<string, string> = {};
 
-  if (extractedCallerName && !isProceduralPhrase(extractedCallerName)) {
+  if (!deps.secureContact && extractedCallerName && !isProceduralPhrase(extractedCallerName)) {
     slotsToUpdate.name = extractedCallerName;
   }
 
   // Numbers and dates mentioned inside a requested example are not live slots.
   if (!explanationOnly) {
-    const accumulatedPhone = accumulatePhoneDigits(session, utterance);
-    if (accumulatedPhone) {
+    const accumulatedPhone = deps.secureContact ? null : accumulatePhoneDigits(session, utterance);
+    if (accumulatedPhone && !deps.secureContact) {
       slotsToUpdate.phone = accumulatedPhone;
     }
 
@@ -970,7 +973,7 @@ export async function ingestCallerUtterance(
     }
 
     const emailMatch = utterance.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/iu);
-    if (emailMatch) {
+    if (emailMatch && !deps.secureContact) {
       slotsToUpdate.email = emailMatch[0].toLowerCase();
     }
 

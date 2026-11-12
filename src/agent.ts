@@ -35,6 +35,7 @@ import {
   newSession,
   renderLiveState,
   snapshotSession,
+  autoAdvance,
   type CallContext,
   type CallMetrics,
   type IntentSpec,
@@ -54,6 +55,8 @@ import {
   upsertCrmContact
 } from "./lib/conversation-manager/db";
 import { MAX_CALL_SECONDS, releaseVoiceCall } from "./lib/voice-access";
+import {MIZAN_PROFILE,MIZAN_HQ_FACTS} from "./lib/mizan-profile";
+import {validatePrivateContact,saveCallContact,maskContactText,type PrivateContact} from "./lib/private-contact";
 import { redactPII } from "./lib/crypto";
 import {
   DeepgramStreamingSession,
@@ -116,6 +119,11 @@ export class MizanVoiceAgent extends Agent<Env> {
   private tenantCustomization = "";
   private callDeadline = 0;
   private callTimer: ReturnType<typeof setTimeout> | null = null;
+  private privateContact: PrivateContact | null = null;
+  private spokenNames: string[] = [];
+  private contactPaused = false;
+  private contactPending: {id:string;expires:number;intent:string|null;phase:"editing"|"saving"|"saved"|"resuming"} | null = null;
+  private contactDeclined = false;
   private turnCount = 0;
   private callStartTime = 0;
   private initialized = false;
@@ -185,16 +193,17 @@ export class MizanVoiceAgent extends Agent<Env> {
 
     const voiceConfig = await getTenantVoiceConfig(this.tenantSlug, this.env);
     this.escalationPhone = voiceConfig?.escalation_phone ?? null;
-    this.tenantCustomization = voiceConfig?.tenant_customization ?? "";
+    this.tenantCustomization = this.tenantSlug === "mizan-hq" ? "" : voiceConfig?.tenant_customization ?? "";
     if (this.tenantSlug !== "mizan-hq" && this.elevenLabsConfig && voiceConfig?.voice_id && /^[A-Za-z0-9_-]{8,128}$/u.test(voiceConfig.voice_id)) {
       this.elevenLabsConfig.voice_id = voiceConfig.voice_id;
     }
 
     const knowledge = await getTenantKnowledge(this.tenantSlug, this.env);
     this.businessHours = knowledge.schedules ?? knowledge.hours ?? null;
-    this.knowledgeContext = Object.entries(knowledge)
+    this.knowledgeContext = this.tenantSlug === "mizan-hq" ? MIZAN_HQ_FACTS : Object.entries(knowledge)
       .map(([category, value]) => "[" + category + "]: " + value)
       .join("\n");
+    if(this.tenantSlug === "mizan-hq") this.businessHours=null;
 
     this.cmSession = newSession();
     this.callContext = {
@@ -282,11 +291,26 @@ export class MizanVoiceAgent extends Agent<Env> {
     this.releaseCallKeepAlive?.();
     this.releaseCallKeepAlive = await this.keepAlive();
 
-    this.deepgramSession = new DeepgramStreamingSession(
-      deepgramKey,
+    this.startStt(connection);
+    connection.send(
+      JSON.stringify({
+        type: "status",
+        status: "ready",
+        sampleRate: 16000,
+        encoding: "linear16",
+        format: "mp3",
+        conversationState: this.cmSession.state
+      })
+    );
+  }
+
+  private startStt(connection: Connection) {
+    this.deepgramSession?.close();
+    const session = new DeepgramStreamingSession(
+      (this.env.DEEPGRAM_API_KEY || "").trim(),
       {
         onInterimTranscript: (interimText) => {
-          if (this.sessionClosed || this.processingTurn) return;
+          if (this.sessionClosed || this.contactPaused || this.processingTurn || this.deepgramSession !== session) return;
           // Interim transcripts are never forwarded to the LLM conversation engine.
           // Send lightweight status indicator only.
           if (interimText) {
@@ -298,13 +322,18 @@ export class MizanVoiceAgent extends Agent<Env> {
           }
         },
         onFinalTranscript: async (finalText, _confidence, detectedLanguage) => {
-          await this.handleFinalTranscript(connection, finalText, detectedLanguage);
+          if (this.deepgramSession === session && !this.contactPaused) await this.handleFinalTranscript(connection, finalText, detectedLanguage);
         },
         onError: (error) => {
-          console.error("Deepgram STT stream error:", error.message);
+          console.error("Deepgram STT stream error");
         },
         onStatus: (status) => {
-          if (this.sessionClosed) return;
+          if (this.sessionClosed || this.deepgramSession !== session) return;
+          if (status === "connected" && this.contactPending?.phase === "resuming") {
+            const id=this.contactPending.id; this.contactPending=null; this.contactPaused=false;
+            connection.send(JSON.stringify({type:"contact_resumed",requestId:id}));
+            return;
+          }
           try { connection.send(JSON.stringify({ type: "status", status: `stt_${status}` })); }
           catch { /* caller disconnected */ }
         }
@@ -321,21 +350,73 @@ export class MizanVoiceAgent extends Agent<Env> {
       }
     );
 
-    void this.deepgramSession.connect();
-    connection.send(
-      JSON.stringify({
-        type: "status",
-        status: "ready",
-        sampleRate: 16000,
-        encoding: "linear16",
-        format: "mp3",
-        conversationState: this.cmSession.state
-      })
-    );
+    this.deepgramSession = session;
+    void session.connect();
+  }
+
+  private protect(text:string):string {
+    // These are approved public business contacts, not caller-provided secrets.
+    const publicContacts=this.tenantSlug === "mizan-hq" ? [MIZAN_PROFILE.email,MIZAN_PROFILE.phone,MIZAN_PROFILE.phoneDisplay] : [];
+    let safe=text;
+    publicContacts.forEach((value,index)=>{safe=safe.split(value).join(`PUBLICCONTACTTOKEN${index}END`)});
+    safe=maskContactText(safe,this.privateContact ?? {},this.spokenNames);
+    publicContacts.forEach((value,index)=>{safe=safe.split(`PUBLICCONTACTTOKEN${index}END`).join(value)});
+    return safe;
+  }
+
+  private noteSpokenName(text:string) {
+    const name=extractCallerTitleAndName(text,{},false).name;
+    if(name && !this.spokenNames.includes(name)) {this.spokenNames.push(name);if(this.spokenNames.length>32)this.spokenNames.shift();}
+  }
+
+  private requestContact(connection:Connection) {
+    if(this.contactPending || this.sessionClosed) return;
+    const spec=this.intents.find(i=>i.id===this.cmSession.intent);
+    if(!spec?.action || this.cmSession.actionResult?.ok) return;
+    this.contactPending={id:crypto.randomUUID(),expires:Date.now()+300000,intent:this.cmSession.intent,phase:"editing"};
+    this.contactPaused=true;
+    this.deepgramSession?.close(); this.deepgramSession=null;
+    connection.send(JSON.stringify({type:"contact_required",requestId:this.contactPending.id,fields:["name","phone",...(spec.slots.some(s=>s.name==="email")?["email"]:[])]}));
+  }
+
+  private async handleContactControl(connection:Connection,control:Record<string,unknown>) {
+    if(control.type==="contact_request") { this.contactDeclined=false; this.requestContact(connection); return; }
+    const pending=this.contactPending;
+    if(!pending || control.requestId!==pending.id || pending.intent!==this.cmSession.intent) return;
+    if(control.type==="contact_resume" && pending.phase==="saved") {
+      pending.phase="resuming"; this.startStt(connection); return;
+    }
+    if(control.type==="contact_cancel" && pending.phase==="editing") {
+      pending.phase="saved"; this.contactDeclined=true;
+      connection.send(JSON.stringify({type:"contact_result",requestId:pending.id,ok:true,cancelled:true})); return;
+    }
+    if(control.type!=="contact_submit" || pending.phase!=="editing") return;
+    if(Date.now()>pending.expires || control.confirmed!==true) {
+      connection.send(JSON.stringify({type:"contact_result",requestId:pending.id,ok:false,message:"راجع تأكيد البيانات أو ألغِ النموذج لطلب نموذج جديد."})); return;
+    }
+    pending.phase="saving";
+    try {
+      const contact=validatePrivateContact(control.contact);
+      await saveCallContact(this.env.DB,this.tenantSlug!,this.sessionId!,contact,this.env.CONTACT_ENC_KEY);
+      if(this.sessionClosed || this.contactPending!==pending) return;
+      this.privateContact=contact;
+      for(const field of ["name","phone","email"] as const) {
+        if(contact[field]) this.cmSession.slots[field]={value:contact[field]!,confirmed:true,source:"caller",setAtTurn:this.cmSession.totalTurns};
+        else delete this.cmSession.slots[field];
+      }
+      this.contactDeclined=false; autoAdvance(this.cmSession,this.intents);
+      pending.phase="saved";
+      // Remove earlier incidental contact occurrences before any later provider request.
+      this.conversation=this.conversation.map(turn=>({...turn,content:this.protect(turn.content)}));
+      connection.send(JSON.stringify({type:"contact_result",requestId:pending.id,ok:true}));
+    } catch {
+      pending.phase="editing";
+      connection.send(JSON.stringify({type:"contact_result",requestId:pending.id,ok:false,message:"تعذر حفظ البيانات. راجع الاسم ورقم الموبايل والبريد ثم حاول مجددًا، أو ألغِ النموذج."}));
+    }
   }
 
   async onMessage(connection: Connection, message: string | ArrayBuffer | ArrayBufferView) {
-    if (this.sessionClosed) return;
+    if (this.sessionClosed || this.activeConnection !== connection) return;
     if (this.callDeadline && Date.now() >= this.callDeadline) {
       connection.close(1000,"Maximum call duration reached");
       await this.onClose(connection,1000,"Maximum call duration reached",true);
@@ -347,13 +428,16 @@ export class MizanVoiceAgent extends Agent<Env> {
     }
 
     if (typeof message === "string") {
-      let control: { type?: string; encoding?: string };
+      if(message.length>4096) { connection.close(1009,"Control message too large"); return; }
+      let control: Record<string,unknown>;
       try {
         control = JSON.parse(message) as { type?: string; encoding?: string };
       } catch {
         return;
       }
 
+      if (String(control.type).startsWith("contact_")) { await this.handleContactControl(connection,control); return; }
+      if (this.contactPaused) return;
       if (control.type === "audio_format") {
         this.clientAudioFormat = control.encoding === "float32" ? "float32" : "linear16";
         return;
@@ -365,6 +449,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       return;
     }
 
+    if (this.contactPaused) return;
     // Do not accept audio before `onConnect` initializes the Deepgram session or after close
     if (!this.deepgramSession || this.activeConnection !== connection) {
       return;
@@ -393,11 +478,12 @@ export class MizanVoiceAgent extends Agent<Env> {
     transcript: string,
     _detectedLanguage: "ar" | "en"
   ) {
-    if (this.sessionClosed || !this.initialized || !this.tenantSlug || !this.sessionId) {
+    if (this.sessionClosed || this.contactPaused || !this.initialized || !this.tenantSlug || !this.sessionId) {
       return;
     }
 
-    const cleaned = transcript.trim();
+    this.noteSpokenName(transcript);
+    const cleaned = this.protect(transcript.trim());
     if (!cleaned) return;
 
     // Prevent concurrent or duplicate back-to-back turns for the exact same utterance
@@ -420,7 +506,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       connection.send(JSON.stringify({ type: "transcript", speaker: "caller", text: cleaned }));
       await this.respondToTranscript(connection, cleaned);
     } catch (error) {
-      console.error("Voice pipeline failed:", error);
+      console.error("Voice pipeline failed");
       if (!this.sessionClosed) {
         try {
           connection.send(
@@ -475,18 +561,21 @@ export class MizanVoiceAgent extends Agent<Env> {
     }
 
     return {
+      secureContact:true,
       ctx: this.callContext,
       intents: this.intents,
-      runAction: (action, slots, idempotencyKey) =>
-        executeTenantBusinessAction({
+      runAction: (action, slots, idempotencyKey) => {
+        if (!this.privateContact) return Promise.resolve({ok:false,detail:"Complete the private on-screen contact form before executing this request."});
+        return executeTenantBusinessAction({
           db: this.env.DB,
           sessionId: this.sessionId!,
           tenantSlug: this.tenantSlug!,
           action,
-          slots,
+          slots: {...slots,...this.privateContact},
           idempotencyKey,
           contactEncKey: this.env.CONTACT_ENC_KEY
-        }),
+        });
+      },
       canTransfer: () => Boolean(this.escalationPhone)
     };
   }
@@ -496,28 +585,16 @@ export class MizanVoiceAgent extends Agent<Env> {
     const turnStart = Date.now();
     this.turnCount++;
 
-    const lastAssistant = this.conversation.at(-1)?.content ?? "";
-    const nameRequested = !this.callContext?.caller.firstName && /(?:اسمك|الاسم|أناديك|اناديك)/u.test(lastAssistant);
-    const callerIdentity = extractCallerTitleAndName(transcript, this.personTitleContext, nameRequested);
-    this.personTitleContext = {
-      role: "caller",
-      callerName: callerIdentity.name,
-      callerTitle: callerIdentity.title,
-      callerGender: callerIdentity.gender
-    };
-
+    this.noteSpokenName(transcript);
+    transcript=this.protect(transcript);
     const toolDeps = this.createToolDeps();
     toolDeps.ctx.clock = buildClock("Africa/Cairo");
-    if (callerIdentity.name) toolDeps.ctx.caller.firstName = callerIdentity.name;
-    if (callerIdentity.title) toolDeps.ctx.caller.title = callerIdentity.title;
-    if (callerIdentity.gender !== "unknown") toolDeps.ctx.caller.gender = callerIdentity.gender;
-
     // 1. Run Conversation Manager turn ingestion (state transitions, slot validation, confirmation guards, actions)
     const { outcomes } = await ingestCallerUtterance(
       toolDeps,
       this.cmSession,
       transcript,
-      callerIdentity.name
+      null
     );
     for (const outcome of outcomes) {
       if (outcome.rejected) {
@@ -525,28 +602,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       }
     }
 
-    // 2. If a valid phone number was collected, check CRM contacts to enrich returning customer context
-    const collectedPhone = this.cmSession.slots.phone?.value ?? null;
-    if (collectedPhone && toolDeps.ctx.callerPhone !== collectedPhone) {
-      toolDeps.ctx.callerPhone = collectedPhone;
-      const crmMatch = await lookupCaller(this.env.DB, this.tenantSlug, collectedPhone, this.env.CONTACT_ENC_KEY);
-      if (crmMatch) {
-        toolDeps.ctx.callerType = crmMatch.callerType;
-        toolDeps.ctx.caller.lastSummary = crmMatch.crm.last_call_summary;
-        toolDeps.ctx.caller.lastCallAt = crmMatch.crm.last_call_at;
-        if (!toolDeps.ctx.caller.firstName && crmMatch.crm.name) {
-          toolDeps.ctx.caller.firstName = crmMatch.crm.name;
-          this.personTitleContext.callerName = crmMatch.crm.name;
-        }
-        if (toolDeps.ctx.caller.gender === "unknown" && crmMatch.crm.gender !== "unknown") {
-          toolDeps.ctx.caller.gender = crmMatch.crm.gender;
-          this.personTitleContext.callerGender = crmMatch.crm.gender;
-        }
-      } else {
-        toolDeps.ctx.callerType = "new_lead";
-      }
-    }
-
+    // A supplied phone is not identity verification: never load another caller's history.
     await this.env.BACKGROUND_QUEUE.send({
       type: "record_turn",
       tenantSlug: this.tenantSlug,
@@ -556,12 +612,19 @@ export class MizanVoiceAgent extends Agent<Env> {
       turnIndex: this.turnCount
     });
 
+    const actionSpec=this.intents.find(i=>i.id===this.cmSession.intent);
+    const needsContact=Boolean(actionSpec?.action && !this.privateContact && !this.cmSession.emergencyDetected && !this.cmSession.endRequest && !this.cmSession.handoff);
     let reply = "";
 
     // 3. Hard emergency override (REG-06): immediate ambulance 123 directive without asking for booking slots
     if (this.cmSession.emergencyDetected) {
       const escalationHint = this.escalationPhone ? ` أو تواصل فوراً مع طوارئ المكان على ${this.escalationPhone}` : "";
       reply = `سلامتك، الأعراض دي محتاجة تدخل طبي فوري. من فضلك اتصل بالإسعاف حالاً على رقم 123 أو توجه لأقرب مستشفى طوارئ${escalationHint}.`;
+    } else if(this.tenantSlug === "mizan-hq" && /(?:السعر|أسعار|اسعار|التكلفة|تكلفه|بكام|كام الاشتراك|التسعير|pricing|price)/iu.test(transcript)) {
+      reply="عرض السعر مجاني، والسعر بيتحدد حسب احتياجات منشأتك والتخصيص والتكاملات والدعم. ابعت طلبك من قسم التواصل في mizanconsult.com أو راسل info@mizanconsult.com؛ هنراجع الطلب ونرد في أسرع وقت ممكن، من غير التزام بالتعاقد بمجرد الطلب.";
+    } else if(needsContact) {
+      if (!this.contactDeclined) this.requestContact(connection);
+      reply=this.contactDeclined ? "نقدر نكمل الاستفسارات، لكن تنفيذ الطلب محتاج بيانات من النموذج الآمن. تقدر تفتحه من زر إدخال البيانات كتابة." : "لاستكمال طلبك، اكتب بيانات التواصل في الاستمارة اللي ظهرت. الميكروفون متوقف مؤقتًا؛ ميزان مش هيسمعك وإنت بتملا الاستمارة. بعد الإرسال وكملان الاتصال، قولّي نكمل الطلب.";
     } else {
       const buildPrompt = () => this.buildSystemPrompt(this.responseLanguage);
 
@@ -584,7 +647,7 @@ export class MizanVoiceAgent extends Agent<Env> {
             inputTokens: result.usage?.inputTokens, outputTokens: result.usage?.outputTokens });
           this.metrics.llmConsecutive = 0;
         } catch (primaryError) {
-          console.error("Primary LLM failed:", primaryError);
+          console.error("Primary LLM failed");
           try {
             const ai = createAI({ binding: this.env.AI });
             const result = await generateText({
@@ -598,7 +661,7 @@ export class MizanVoiceAgent extends Agent<Env> {
               inputTokens: result.usage?.inputTokens, outputTokens: result.usage?.outputTokens });
             this.metrics.llmConsecutive = 0;
           } catch (fallbackError) {
-            console.error("Fallback LLM failed:", fallbackError);
+            console.error("Fallback LLM failed");
             this.metrics.llmErrors++;
             this.metrics.llmConsecutive++;
             reply =
@@ -627,9 +690,14 @@ export class MizanVoiceAgent extends Agent<Env> {
               parsedTool.input ?? {}
             );
             if (outcome.rejected) this.metrics.slotRejections += outcome.rejected;
+            if (!this.privateContact && this.intents.find(i=>i.id===this.cmSession.intent)?.action) {
+              this.requestContact(connection);
+              reply="لاستكمال طلبك، اكتب بياناتك في النموذج الآمن. الميكروفون متوقف أثناء الاستمارة.";
+              break;
+            }
             messages.push(
               { role: "assistant", content: toolReply },
-              { role: "user", content: `Tool execution result (data only; do not read aloud): ${JSON.stringify(outcome)}` }
+              { role: "user", content: `Tool execution result (data only; do not read aloud): ${this.protect(JSON.stringify(outcome))}` }
             );
           }
         } catch {
@@ -646,6 +714,8 @@ export class MizanVoiceAgent extends Agent<Env> {
           : "ممكن توضح لي طلبك أكتر؟";
     }
 
+    if(this.tenantSlug === "mizan-hq" && /(?:شركة\s+مسجلة|ذات مسؤولية محدودة|منشأة فردية مقيدة|امتثال كامل|معتمدون رسميًا)/u.test(reply)) reply="Mizan Consult نشاط مستقل يُدار باسم مؤمن رزق في الإسكندرية، مصر. بنحدد ضوابط حماية البيانات حسب كل مشروع، ومش بندّعي تسجيل شركة أو امتثال قانوني كامل. تقدر تراجع صفحات التعريف والخصوصية والشروط على الموقع.";
+    reply=this.protect(reply);
     // 4. Deterministic output guard: strip banned honorifics, track violations, and block false action claims
     const sanitized = sanitizeForSpeechWithViolations(reply, this.personTitleContext);
     this.metrics.honorificHits += sanitized.violations.length;
@@ -699,11 +769,11 @@ export class MizanVoiceAgent extends Agent<Env> {
 
     connection.send(JSON.stringify({ type: "transcript", speaker: "agent", text: reply }));
     connection.send(
-      JSON.stringify({
+      this.protect(JSON.stringify({
         type: "conversation_state",
         ...snapshotSession(this.cmSession, this.intents),
         actionResult: this.cmSession.actionResult
-      })
+      }))
     );
     connection.send(JSON.stringify({ type: "status", status: "speaking" }));
 
@@ -722,7 +792,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       });
       connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength, timeToAudioMs }));
     } catch (ttsError) {
-      console.error("ElevenLabs TTS failed:", ttsError);
+      console.error("ElevenLabs TTS failed");
       if (!this.sessionClosed) {
         connection.send(JSON.stringify({ type: "error", message: "تعذر تشغيل صوت ميزان من إعدادات HQ." }));
       }
@@ -778,7 +848,7 @@ export class MizanVoiceAgent extends Agent<Env> {
           signal: controller.signal
         });
       } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
+        lastError = "network request failed";
         if (attempt === 3) throw new Error("ElevenLabs network/timeout error: " + lastError);
         await new Promise((resolve) => setTimeout(resolve, attempt * 300));
         continue;
@@ -796,8 +866,8 @@ export class MizanVoiceAgent extends Agent<Env> {
         return audio;
       }
 
-      const errorBody = (await response.text()).slice(0, 300);
-      lastError = "ElevenLabs HTTP " + response.status + ": " + errorBody;
+      await response.body?.cancel();
+      lastError = "ElevenLabs HTTP " + response.status;
       const retryable = response.status === 429 || response.status === 500 ||
         response.status === 502 || response.status === 503 || response.status === 504;
       if (!retryable || attempt === 3) throw new Error(lastError);
@@ -812,13 +882,15 @@ export class MizanVoiceAgent extends Agent<Env> {
 
   private buildSystemPrompt(language: "ar" | "en"): string {
     const toolDeps = this.createToolDeps();
-    const liveState = renderLiveState(this.cmSession, toolDeps.ctx, this.intents);
+    const safeContext={...toolDeps.ctx,business:{...toolDeps.ctx.business,knowledge:this.tenantSlug === "mizan-hq" ? MIZAN_HQ_FACTS : this.protect(toolDeps.ctx.business.knowledge ?? ""),hours:this.protect(toolDeps.ctx.business.hours ?? "")},callerPhone:null,caller:{firstName:null,title:null,gender:"unknown" as const,lastSummary:null,lastCallAt:null,email:null}};
+    const safeSession=JSON.parse(this.protect(JSON.stringify(this.cmSession))) as Session;
+    const liveState = renderLiveState(safeSession, safeContext, this.intents);
     return buildManagedSystemPrompt({
-      industryGuard:this.industryGuard,
-      tenantCustomization:this.tenantCustomization,
+      industryGuard:this.protect(this.industryGuard),
+      tenantCustomization:this.tenantSlug === "mizan-hq" ? "" : this.protect(this.tenantCustomization),
       escalationPhone: this.escalationPhone,
-      ctx: toolDeps.ctx,
-      personContext: this.personTitleContext,
+      ctx: safeContext,
+      personContext: {role:"caller"},
       learnings: [],
       liveState,
       language
@@ -829,6 +901,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     if (this.activeConnection && this.activeConnection !== _connection) return;
     if (this.sessionClosed) return;
     this.sessionClosed = true;
+    this.contactPending=null; this.contactPaused=true;
     if (this.callTimer) clearTimeout(this.callTimer);
     this.callTimer = null;
     this.activeConnection = null;
@@ -869,19 +942,16 @@ export class MizanVoiceAgent extends Agent<Env> {
         callId: this.sessionId,
         tenantId: this.tenantSlug,
         caller: {
-          phone: confirmedPhone,
-          name:
-            this.cmSession.slots.name?.value ??
-            this.personTitleContext.callerName ??
-            undefined,
-          title: this.personTitleContext.callerTitle ?? undefined,
+          phone: "",
+          name: undefined,
+          title: undefined,
           gender: this.personTitleContext.callerGender ?? "unknown",
           isReturning: this.callContext?.callerType === "returning_customer"
         },
         transcript: this.conversation.map((turn, idx) => ({
           idx,
           role: turn.role,
-          content: redactPII(turn.content)
+          content: this.protect(turn.content)
             .replace(/\b\d{14}\b/gu, "[رقم قومي]")
             .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, "[بريد إلكتروني]"),
           ts: this.callStartTime + idx * 1000
@@ -896,7 +966,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       };
 
       try {
-        const evaluation = await evaluateCall(this.env.AI, this.env.PRIMARY_LLM, evalState);
+        const evaluation = JSON.parse(this.protect(JSON.stringify(await evaluateCall(this.env.AI, this.env.PRIMARY_LLM, evalState))));
         await persistCallEvaluationAndLearnings(
           this.env.DB,
           this.sessionId,
@@ -922,12 +992,11 @@ export class MizanVoiceAgent extends Agent<Env> {
           await upsertCrmContact(this.env.DB, this.tenantSlug, confirmedPhone, {
             title: this.personTitleContext.callerTitle,
             name:
-              evaluation.inferred_caller_first_name ??
+              this.privateContact?.name ??
               this.cmSession.slots.name?.value ??
               this.personTitleContext.callerName ??
               null,
             gender:
-              evaluation.inferred_caller_gender ??
               this.personTitleContext.callerGender ??
               "unknown",
             email: this.cmSession.slots.email?.value ?? null,
@@ -943,7 +1012,7 @@ export class MizanVoiceAgent extends Agent<Env> {
           learningCount: evaluation.candidate_learnings.length
         });
       } catch (error) {
-        console.error("Conversation learning persistence failed:", error);
+        console.error("Conversation learning persistence failed");
       }
     }
   }
