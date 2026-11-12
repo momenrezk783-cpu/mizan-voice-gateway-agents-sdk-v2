@@ -4,6 +4,16 @@ import { resolve } from 'node:path';
 const root = resolve(import.meta.dirname, '..');
 const mappings = [
   ['/', 'public/index.html', 'text/html; charset=utf-8'],
+  ['/about', 'public/about.html', 'text/html; charset=utf-8'],
+  ['/about.html', 'public/about.html', 'text/html; charset=utf-8'],
+  ['/privacy', 'public/privacy.html', 'text/html; charset=utf-8'],
+  ['/privacy.html', 'public/privacy.html', 'text/html; charset=utf-8'],
+  ['/terms', 'public/terms.html', 'text/html; charset=utf-8'],
+  ['/terms.html', 'public/terms.html', 'text/html; charset=utf-8'],
+  ['/css/site.css', 'public/css/site.css', 'text/css; charset=utf-8'],
+  ['/js/quote-form.js', 'public/js/quote-form.js', 'application/javascript; charset=utf-8'],
+  ['/js/private-contact-ui.js', 'public/js/private-contact-ui.js', 'application/javascript; charset=utf-8'],
+  ['/js/admin-quotes.js', 'public/js/admin-quotes.js', 'application/javascript; charset=utf-8'],
   ['/index.html', 'public/index.html', 'text/html; charset=utf-8'],
   ['/login', 'public/login.html', 'text/html; charset=utf-8'],
   ['/login.html', 'public/login.html', 'text/html; charset=utf-8'],

@@ -6,7 +6,7 @@ const cache = new Map();
 const asUrl = source => 'data:text/javascript;base64,'+Buffer.from(source).toString('base64');
 const externals = {
   agents:asUrl(`export class Agent {constructor(ctx,env){this.env=env;this.name=ctx.name;} async keepAlive(){return ()=>{};}} export async function routeAgentRequest(request,env){return globalThis.__routeVoice(request,env);}`),
-  ai:asUrl(`export async function generateText(){throw new Error('Live AI forbidden in local tests');}`),
+  ai:asUrl(`export async function generateText(options){if(globalThis.__mizanGenerate)return globalThis.__mizanGenerate(options);throw new Error('Live AI forbidden in local tests');}`),
   'agents/models/ai-sdk':asUrl(`export function createAI(){return id=>({modelId:id});}`)
 };
 export function loadUrl(file) {

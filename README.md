@@ -1,3 +1,5 @@
+> **Profile and private-contact upgrade (2026-11-12):** Apply additive migration 005 after 001–004 **before merging/deploying this version**. Production CI checks the required tables without reading customer rows and refuses deployment if they are missing. See [implementation and rollout notes](docs/PROFILE_AND_CONTACT_UPGRADE.md). This change has not run production migrations or deployed production.
+
 > Upgrade note: this version adds signed call admission and encrypted CRM storage.
 > Apply migration 004 before deploying; see [the upgrade cheat sheet](docs/HARDENING_UPGRADE.md)
 > for legacy-contact migration, limits, validation and rollback steps. No live deployment

@@ -15,7 +15,7 @@ const privacy=await importTs('src/lib/crypto.ts');
 const auth=await importTs('src/lib/auth.ts');
 const {default:worker,MizanVoiceAgent}=await importTs('src/index.ts');
 try {
-  for(const file of ['schema.sql','migration-001.sql','migration-002.sql','migration-003.sql','migration-004.sql']) db.apply(file);
+  for(const file of ['schema.sql','migration-001.sql','migration-002.sql','migration-003.sql','migration-004.sql','migration-005.sql']) db.apply(file);
   db.apply('migration-004.sql'); // new migration is safely repeatable
   await db.prepare(`INSERT INTO tenants(id,slug,name,industry,max_concurrent_sessions) VALUES ('a','tenant-a','Business A','general',3),('b','tenant-b','Business B','general',1)`).run();
   await db.prepare(`INSERT INTO tenant_voice_config(tenant_slug,system_prompt) VALUES ('tenant-a','legacy')`).run();

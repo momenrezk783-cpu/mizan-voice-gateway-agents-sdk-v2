@@ -13,3 +13,8 @@ node_modules
 
 # Isolated staged bindings contain deployment identifiers
 wrangler.staging.toml
+
+# Local browser evidence and test output
+artifacts/
+test-results/
+playwright-report/

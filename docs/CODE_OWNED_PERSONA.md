@@ -10,6 +10,15 @@ Saved configuration and compatibility behavior on NEW calls:
 - `tenant_voice_config.tenant_customization`: tenant business facts and preferences.
 - `tenant_knowledge`: services, hours, holidays, current offers and cancellations.
 
+For `mizan-hq`, approved public identity, services and free quotation information
+now come from `src/lib/mizan-profile.ts`; legacy HQ customization/knowledge does
+not override these facts. Other tenants retain their scoped business facts.
+Personal name, phone and email for actionable call requests are collected through
+the private form, not by voice or model tools. The server pauses STT, stores an
+encrypted contact envelope and exposes only placeholders/confirmation flags to
+the model. This reduces disclosure; it cannot prevent callers speaking personal
+information before the form opens, nor guarantee detection of all such speech.
+
 Text is bounded and stripped of angle brackets to prevent delimiter spoofing.
 These are prompt boundaries, not proof of resistance to every model prompt injection.
 Evaluator learnings and legacy tenant `system_prompt` do not enter the active prompt.
