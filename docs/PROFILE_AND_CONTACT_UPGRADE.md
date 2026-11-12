@@ -7,6 +7,8 @@ Deepgram STT, Workers AI language model and ElevenLabs TTS configuration.
 
 1. Back up production D1 using the existing operational procedure. Preserve the
    existing `CONTACT_ENC_KEY` and `SESSION_SECRET`; do not rotate them for this upgrade.
+   The AES-256 key may be encoded as base64 (32 decoded bytes) or 64 hex digits;
+   both represent the same 32-byte key and require no key rotation.
 2. After migrations 001–004, apply only the additive, repeatable migration:
    `npx wrangler d1 execute mizan-portal-db --remote --file=./migration-005.sql`.
    Do not rerun `schema.sql` on production. This step requires an authorized
