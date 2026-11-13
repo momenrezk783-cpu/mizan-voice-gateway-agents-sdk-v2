@@ -120,7 +120,12 @@ export default {
     // Protected TTSForFree evaluation studio. No patient-facing changes.
     if ((url.pathname === "/tts-studio" || url.pathname === "/tts-studio.html") && request.method === "GET") {
       const user = await getSessionUser(request, env);
-      if (!user || user.role !== "super_admin") return new Response("Forbidden", {status:403,headers:securityHeaders});
+      if (!user || user.role !== "super_admin") {
+        const message = !user
+          ? "استوديو الأصوات يحتاج تسجيل دخول مدير خاص بنسخة Preview. حساب الإنتاج لا ينتقل تلقائيًا للنسخة التجريبية."
+          : "الحساب الحالي لا يملك صلاحية مدير النظام لفتح استوديو الأصوات.";
+        return new Response(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>دخول مختبر الصوت | ميزان</title><style>body{margin:0;background:#f3f6fa;color:#162c46;font:16px system-ui;display:grid;min-height:100vh;place-items:center}.card{background:white;border:1px solid #dae3ec;border-radius:18px;padding:30px;max-width:520px;margin:20px;line-height:1.9}a{display:inline-block;background:#126095;color:white;padding:10px 22px;border-radius:10px;text-decoration:none}small{display:block;color:#627188;margin-top:16px}</style></head><body><main class="card"><h1>مختبر الصوت المصري</h1><p>${message}</p><a href="/login">تسجيل الدخول</a><small>النسخة التجريبية مستقلة عن الإنتاج، ومفتاح TTSForFree فيها يحتاج إعدادًا منفصلًا.</small></main></body></html>`, {status:403,headers:{...securityHeaders,"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}});
+      }
       const asset = new URL("/tts-studio.html", request.url);
       const response = await env.ASSETS.fetch(new Request(asset.toString()));
       return new Response(response.body,{status:response.status,headers:{...securityHeaders,"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}});
