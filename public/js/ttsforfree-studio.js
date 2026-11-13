@@ -1,7 +1,8 @@
 "use strict";
 (()=>{
 const $=id=>document.getElementById(id), base="/api/admin/ttsforfree", storage="mizan:ttsforfree:active-job";
-const state={languages:[],favorites:[],custom:[],catalog:[],limit:null,voice:"",job:null,controller:null,polling:false,creating:false};
+const defaultVoice=$("voice").dataset.defaultVoice || "";
+const state={languages:[],favorites:[],custom:[],catalog:[],limit:null,voice:defaultVoice,job:null,controller:null,polling:false,creating:false};
 const setMessage=s=>{$("message").textContent=s;}, msg=e=>e instanceof Error?e.message:String(e);
 const unwrap=x=>x&&typeof x==="object"&&"Data" in x?x.Data:x;
 const asList=x=>Array.isArray(x)?x:Array.isArray(x?.Languages)?x.Languages:Array.isArray(x?.Voices)?x.Voices:Array.isArray(x?.Items)?x.Items:[];
@@ -21,7 +22,7 @@ function drawGroup(id,items){const el=$(id);el.replaceChildren();if(!items.lengt
  for(const item of items){const t=token(item);if(!t)continue;const b=document.createElement("button");b.type="button";b.className="secondary";b.textContent=friendly(item);b.addEventListener("click",()=>chooseVoice(t));choices.append(b);}
  el.append(choices);
 }
-function renderVoiceDropdown(){const el=$("voice");el.replaceChildren(option("","اختر صوتًا"));for(const [name,items] of [["المفضلة",state.favorites],["أصواتي",state.custom],["كتالوج اللغة",state.catalog]]){const group=document.createElement("optgroup");group.label=name;for(const item of items){const t=token(item);if(t)group.append(option(t,friendly(item)));}el.append(group);}
+function renderVoiceDropdown(){const el=$("voice");el.replaceChildren(option("","اختر صوتًا"));if(defaultVoice)el.append(option(defaultVoice,"صوت TTSForFree المختار للتجربة"));for(const [name,items] of [["المفضلة",state.favorites],["أصواتي",state.custom],["كتالوج اللغة",state.catalog]]){const group=document.createElement("optgroup");group.label=name;for(const item of items){const t=token(item);if(t && t!==defaultVoice)group.append(option(t,friendly(item)));}el.append(group);}
  el.value=state.voice; if(el.value!==state.voice)state.voice=""; $("detail").disabled=!state.voice;updateCreate();}
 function chooseVoice(v){state.voice=v;$("voice").value=v;$("voice-info").replaceChildren();$("detail").disabled=!v;updateCreate();}
 function updateCreate(){const value=$("text").value,count=[...value].length;$("count").textContent=count+" حرف"+(state.limit?" / "+state.limit:" (الحد غير متاح)");$("create").disabled=state.creating||!!state.job||!state.voice||!state.limit||count===0||count>state.limit;}
@@ -38,7 +39,7 @@ async function load(){state.limit=null;state.languages=[];$("load-status").textC
 }
 async function loadCatalog(){const v=$("language").value;state.catalog=[];$("catalog").textContent="جارٍ تحميل الأصوات...";if(!v){renderVoiceDropdown();return;}try{state.catalog=asList(unwrap(await http("/voices?lang="+encodeURIComponent(v))));drawGroup("catalog",state.catalog);}
  catch(e){$("catalog").textContent="فشل تحميل الأصوات: "+msg(e);const b=document.createElement("button");b.className="secondary";b.textContent="إعادة المحاولة";b.onclick=loadCatalog;$("catalog").append(b);}
- const allowed=[...state.favorites,...state.custom,...state.catalog].some(x=>token(x)===state.voice && (!lang(x)||lang(x).toLowerCase()===v.toLowerCase()));if(!allowed)state.voice="";renderVoiceDropdown();
+ const allowed=[...state.favorites,...state.custom,...state.catalog].some(x=>token(x)===state.voice && (!lang(x)||lang(x).toLowerCase()===v.toLowerCase()));if(!allowed && state.voice!==defaultVoice)state.voice="";renderVoiceDropdown();
 }
 async function details(){if(!state.voice)return;$("voice-info").textContent="جارٍ تحميل تفاصيل الصوت...";try{const data=unwrap(await http("/voice-detail?voice="+encodeURIComponent(state.voice)));const detail=typeof data==="object"&&data?data:{};const box=document.createElement("div");box.className="group";const entries=[["الاسم",detail.FriendlyName??detail.DisplayName??detail.Name],["اللكنة",detail.Accent],["الاستخدام",detail.UseCase],["الشخصية",detail.Persona],["التكلفة لكل حرف",detail.BaseCreditsPerCharacter]];for(const [k,v]of entries){if(v!==undefined&&v!==null){const p=document.createElement("p");p.textContent=k+": "+String(v);box.append(p);}}
  const audio=detail.ReviewAudio??detail.PreviewAudioUrl??detail.SampleAudioUrl;if(typeof audio==="string"&&/^https:\/\//.test(audio)){const player=document.createElement("audio");player.controls=true;player.src=audio;box.append(player);}else{const p=document.createElement("p");p.textContent="معاينة صوتية غير متاحة من المزود";box.append(p);}$("voice-info").replaceChildren(box);
@@ -70,6 +71,6 @@ async function create(){if(state.creating||state.job||!state.voice||!state.limit
 $("reload").onclick=load;$("language").onchange=loadCatalog;$("voice").onchange=e=>chooseVoice(e.target.value);$("text").oninput=updateCreate;$("detail").onclick=details;$("create").onclick=create;
 $("cancel").onclick=()=>{stopPoll();setMessage("توقفت المتابعة فقط. الـ Job لم يُلغَ ولا يزال محفوظًا.");$("retry").hidden=false;};$("retry").onclick=poll;
 window.addEventListener("pagehide",stopPoll);
-try{const old=JSON.parse(localStorage.getItem(storage)||"null");if(old&&/^[1-9]\\d{0,17}$/.test(String(old.id))){state.job={id:String(old.id),createdAt:Number(old.createdAt)||Date.now()};setMessage("استعادة متابعة Job سابق: "+state.job.id);$("retry").hidden=false;poll();}}catch{localStorage.removeItem(storage);}
+try{const old=JSON.parse(localStorage.getItem(storage)||"null");if(old&&/^[1-9][0-9]{0,17}$/.test(String(old.id))){state.job={id:String(old.id),createdAt:Number(old.createdAt)||Date.now()};setMessage("استعادة متابعة Job سابق: "+state.job.id);$("retry").hidden=false;poll();}}catch{localStorage.removeItem(storage);}
 load().catch(e=>{$("load-status").textContent="تعذر التحميل: "+msg(e);});
 })();

@@ -6,6 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 [vars]
+TTSFORFREE_VOICE_ID = "v1:v1kA8qJorar2kY8ZtfSi-hS5-wc83AjmckoSRP2qXX5cXsm1l0T-RZHpqLVp-HUMc58"
 ENVIRONMENT = "staging"
 MIZAN_VOICE_ID = "2DkHmQavK9V2UzTYrMYT"
 VOICE_WS_BASE = "wss://mizan-tts-preview.momenrezk783.workers.dev"

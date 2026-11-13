@@ -48,6 +48,7 @@ interface Env {
   DEEPGRAM_API_KEY?: string;
   ELEVENLABS_TTS_KEY?: string;
   TTSFORFREE_API_KEY?: string;
+  TTSFORFREE_VOICE_ID?: string;
   MIZAN_VOICE_ID?: string;
   VOICE_WS_BASE: string;
   PRIMARY_LLM: string;
@@ -127,7 +128,13 @@ export default {
         return new Response(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>دخول مختبر الصوت | ميزان</title><style>body{margin:0;background:#f3f6fa;color:#162c46;font:16px system-ui;display:grid;min-height:100vh;place-items:center}.card{background:white;border:1px solid #dae3ec;border-radius:18px;padding:30px;max-width:520px;margin:20px;line-height:1.9}a{display:inline-block;background:#126095;color:white;padding:10px 22px;border-radius:10px;text-decoration:none}small{display:block;color:#627188;margin-top:16px}</style></head><body><main class="card"><h1>مختبر الصوت المصري</h1><p>${message}</p><a href="/login">تسجيل الدخول</a><small>النسخة التجريبية مستقلة عن الإنتاج، ومفتاح TTSForFree فيها يحتاج إعدادًا منفصلًا.</small></main></body></html>`, {status:403,headers:{...securityHeaders,"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}});
       }
       const asset = new URL("/tts-studio.html", request.url);
-      const response = await env.ASSETS.fetch(new Request(asset.toString()));
+      let response = await env.ASSETS.fetch(new Request(asset.toString()));
+      const defaultVoice = env.TTSFORFREE_VOICE_ID;
+      if (response.ok && defaultVoice) {
+        response = new HTMLRewriter().on("#voice", {
+          element(element) { element.setAttribute("data-default-voice", defaultVoice); },
+        }).transform(response);
+      }
       return new Response(response.body,{status:response.status,headers:{...securityHeaders,"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}});
     }
 

@@ -4,7 +4,7 @@ const API = "https://api.ttsforfree.com";
 type Dict = Record<string, unknown>;
 const obj = (x: unknown): Dict => x && typeof x === "object" && !Array.isArray(x) ? x as Dict : {};
 const str = (x: unknown) => typeof x === "string" ? x : "";
-const jobId = (x: unknown): string | null => typeof x === "number" && Number.isSafeInteger(x) && x > 0 ? String(x) : typeof x === "string" && /^[1-9]\\d{0,17}$/.test(x) ? x : null;
+const jobId = (x: unknown): string | null => typeof x === "number" && Number.isSafeInteger(x) && x > 0 ? String(x) : typeof x === "string" && /^[1-9][0-9]{0,17}$/.test(x) ? x : null;
 const json = (body: unknown, status=200, extra: Record<string,string>={}) => new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","X-Content-Type-Options":"nosniff",...extra}});
 export class TTSForFreeError extends Error {
   constructor(message: string, public status=502, public retryAfter: string | null=null) { super(message); }
@@ -69,7 +69,7 @@ export async function ttsForFreeRoute(request: Request, env:{TTSFORFREE_API_KEY?
         remote=`/api/Common/GetVoiceDetail?voiceName=${encodeURIComponent(name)}`;
       }
       if(path==="/history")remote="/api/TTS/GetHistory?page=1&pageSize=20";
-      const match=path.match(/^\/status\/([1-9]\\d{0,17})$/);
+      const match=path.match(/^\/status\/([1-9][0-9]{0,17})$/);
       if(match)remote=ttsStatusPath(match[1]);
       if(remote) {
         const data=await call(env,remote);
