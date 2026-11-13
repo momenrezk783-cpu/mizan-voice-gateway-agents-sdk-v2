@@ -10,8 +10,8 @@ export function calendarConfig(b: any, validateWebhook: (url:string)=>string): R
 export function cairoStart(date:string,time:string):string {
  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^\d{2}:\d{2}$/.test(time))throw new Error('ISO date and HH:mm required');
  const guess=Date.parse(date+'T'+time+':00Z');if(!Number.isFinite(guess))throw new Error('Invalid date');
- const fmt=new Intl.DateTimeFormat('sv-SE',{timeZone:'Africa/Cairo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
- const candidates=[2,3].map(offset=>new Date(guess-offset*3600000)).filter(d=>fmt.format(d)===date+' '+time);
+ const fmt=new Intl.DateTimeFormat('sv-SE',{timeZone:'Africa/Cairo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23',numberingSystem:'latn',calendar:'iso8601'});
+ const candidates=[2,3].map(offset=>new Date(guess-offset*3600000)).filter(d=>{const parts=Object.fromEntries(fmt.formatToParts(d).map(p=>[p.type,p.value]));return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`===date+' '+time;});
  if(candidates.length!==1)throw new Error('Invalid or ambiguous Cairo time');
  return candidates[0].toISOString();
 }

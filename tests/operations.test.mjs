@@ -84,6 +84,14 @@ await test('Cal.com / Zoho requests, credentials, confirmation and Cairo DST',as
  assert.equal(providers.cairoStart(slots.date,slots.time),'2026-11-15T10:30:00.000Z');
  assert.equal(providers.cairoStart('2026-07-15','12:30'),'2026-07-15T09:30:00.000Z');
  assert.throws(()=>providers.cairoStart('2026-02-31','12:30'));
+ assert.throws(()=>providers.cairoStart('2026-04-24','00:30'),'nonexistent Cairo DST time');
+ assert.throws(()=>providers.cairoStart('2026-10-29','23:30'),'ambiguous Cairo DST time');
+ const realDateTimeFormat=Intl.DateTimeFormat;
+ try {
+  Intl.DateTimeFormat=function(...args){const fmt=new realDateTimeFormat(...args);return {format(){throw Error('Locale-dependent date strings must not be compared')},formatToParts:fmt.formatToParts.bind(fmt)}};
+  assert.equal(providers.cairoStart('2026-11-15','12:30'),'2026-11-15T10:30:00.000Z');
+ }finally{Intl.DateTimeFormat=realDateTimeFormat;}
+
  const cal=providers.calendarRequest('calcom',{event_type_id:12},'secret',slots,'key','a','s1');assert.equal(JSON.parse(cal.init.body).attendee.timeZone,'Africa/Cairo');assert.equal(cal.init.redirect,'error');
  const zoho=providers.calendarRequest('zoho',{host:'www.zohoapis.com',service_id:'1',staff_id:'2'},'secret',slots,'key','a','s1');assert.equal(zoho.init.body.get('from_time'),'15-Nov-2026 12:30:00');
  assert.equal(providers.confirmedBookingId('zoho',{response:{status:'success',returnvalue:{status:'upcoming',booking_id:'z1'}}}),'z1');
