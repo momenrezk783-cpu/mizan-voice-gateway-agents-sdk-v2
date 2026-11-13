@@ -26,7 +26,7 @@ try {
     await assert.rejects(privacy.encryptPII(plain,{CONTACT_ENC_KEY:invalid}),/32-byte AES key/);
   }
   console.log('PASS existing AES-256 key works interchangeably as hex/base64 without rotation; invalid lengths rejected');
-  for(const file of ['schema.sql','migration-001.sql','migration-002.sql','migration-003.sql','migration-004.sql','migration-005.sql'])db.apply(file);
+  for(const file of ['schema.sql','migration-001.sql','migration-002.sql','migration-003.sql','migration-004.sql','migration-005.sql','migration-006.sql','migration-007.sql'])db.apply(file);
   db.apply('migration-005.sql');
   await db.prepare(`INSERT INTO tenants(id,slug,name,industry,domain,max_concurrent_sessions) VALUES ('a','tenant-a','Example A','general','customer.example',3),('b','tenant-b','Example B','general',NULL,1),('hq','mizan-hq','Mizan Consult','general',NULL,3)`).run();
   await db.prepare(`INSERT INTO tenant_voice_config(tenant_slug,system_prompt) VALUES ('tenant-a','legacy'),('mizan-hq','legacy')`).run();
@@ -119,6 +119,38 @@ try {
   await agent.onMessage(connection,JSON.stringify({type:'contact_submit',requestId:pending.id,confirmed:true,contact:privateData}));assert.equal(pending.phase,'editing');assert.equal(agent.contactPaused,true);
   await agent.onMessage(connection,JSON.stringify({type:'contact_cancel',requestId:pending.id}));assert.equal(agent.contactPaused,true);
   await agent.onMessage(connection,JSON.stringify({type:'contact_resume',requestId:pending.id}));await tick();await tick();assert.equal(agent.contactPaused,false);
+  const controlUrl='/api/client/sessions/'+ticket.sessionId;
+  assert.equal((await worker.fetch(request(controlUrl+'/handoff','POST',{}, {Cookie:clientCookie}),env,ctx)).status,200);
+  await agent.syncOperations(connection);assert.equal(agent.aiPaused,true);
+  const pausedModelCount=modelRequests.length,pausedFrames=sockets.reduce((n,s)=>n+s.binary.length,0);
+  await agent.onMessage(connection,pcm);await agent.handleFinalTranscript(connection,'سؤال أثناء التدخل البشري','ar');
+  assert.equal(modelRequests.length,pausedModelCount);assert.equal(sockets.reduce((n,s)=>n+s.binary.length,0),pausedFrames);
+  await agent.onMessage(connection,JSON.stringify({type:'contact_request'}));const humanForm=agent.contactPending;assert.ok(humanForm);
+  await worker.fetch(request(controlUrl+'/resume','POST',{}, {Cookie:clientCookie}),env,ctx);await agent.syncOperations(connection);
+  assert.equal(agent.aiPaused,false);assert.equal(agent.contactPaused,true);assert.equal(agent.deepgramSession,null,'human resume cannot bypass private form');
+  await agent.onMessage(connection,JSON.stringify({type:'contact_cancel',requestId:humanForm.id}));
+  await agent.onMessage(connection,JSON.stringify({type:'contact_resume',requestId:humanForm.id}));await tick();await tick();
+  assert.equal(agent.contactPaused,false);
+  // A pause/resume while the model is running invalidates its stale output.
+  let releaseModel,modelStarted;const started=new Promise(resolve=>modelStarted=resolve);
+  globalThis.__mizanGenerate=options=>{modelRequests.push(structuredClone(options));modelStarted();return new Promise(resolve=>releaseModel=resolve);};
+  const staleTurn=agent.respondToTranscript(connection,'وضح الخدمات أكتر');await started;
+  await worker.fetch(request(controlUrl+'/handoff','POST',{}, {Cookie:clientCookie}),env,ctx);await agent.syncOperations(connection);
+  await worker.fetch(request(controlUrl+'/resume','POST',{}, {Cookie:clientCookie}),env,ctx);await agent.syncOperations(connection);
+  const ttsBeforeStale=ttsRequests.length;releaseModel({text:'إجابة قديمة لا تشغلها.',finishReason:'stop'});await staleTurn;
+  assert.equal(ttsRequests.length,ttsBeforeStale);
+  globalThis.__mizanGenerate=async options=>{modelRequests.push(structuredClone(options));return {text:'نقدر نكمل التفاصيل.',finishReason:'stop'};};
+  globalThis.__mizanGenerate=async options=>{modelRequests.push(structuredClone(options));return {text:"آسف، ما فهمتش. Could you tell me a bit more about your request?",finishReason:'stop'};};
+  await agent.respondToTranscript(connection,'الكلام مش واضح');
+  assert.match(ttsRequests.at(-1).text,/معلش/);assert.ok(!/Could you/.test(ttsRequests.at(-1).text));
+  const emergencyStart=sent.length;
+  await agent.respondToTranscript(connection,'مش قادر اتنفس');
+  assert.equal(agent.aiPaused,true);assert.match(ttsRequests.at(-1).text,/123/);
+  const emergencyMessages=sent.slice(emergencyStart);
+  const audioIndex=emergencyMessages.findIndex(x=>x instanceof ArrayBuffer);
+  const noticeIndex=emergencyMessages.findIndex(x=>typeof x==='string'&&JSON.parse(x).type==='handoff'&&JSON.parse(x).target==='123');
+  assert.ok(audioIndex>=0&&noticeIndex>audioIndex,'emergency audio must precede the pause notice');
+  console.log('PASS live-agent handoff, private-form interlock, stale generation suppression and emergency instruction ordering');
   await agent.onClose(connection,1000,'test end',true);
   const external=JSON.stringify({modelRequests,ttsRequests,evaluationRequests,queued});
   for(const value of [normalized.name,'كريم','سليم',normalized.phone,normalized.email])assert.ok(!external.includes(value),'private value escaped into a provider or audit payload: '+value);
