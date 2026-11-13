@@ -118,7 +118,7 @@ export default {
     }
 
     // Protected TTSForFree evaluation studio. No patient-facing changes.
-    if (url.pathname === "/tts-studio" && request.method === "GET") {
+    if ((url.pathname === "/tts-studio" || url.pathname === "/tts-studio.html") && request.method === "GET") {
       const user = await getSessionUser(request, env);
       if (!user || user.role !== "super_admin") return new Response("Forbidden", {status:403,headers:securityHeaders});
       const asset = new URL("/tts-studio.html", request.url);
