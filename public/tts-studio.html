@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ميزان | مختبر الأصوات</title><style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#172840;background:#f3f6fa}*{box-sizing:border-box}body{margin:0}.wrap{max-width:930px;margin:auto;padding:25px 16px}header{display:flex;align-items:center;justify-content:space-between}a{color:#1466a7}h1{font-size:1.6rem;margin:20px 0 7px}.muted{color:#53667c}.card{background:white;border:1px solid #d9e1ea;border-radius:15px;padding:18px;margin:14px 0;box-shadow:0 2px 8px #14203d0b}label{display:block;font-weight:650;margin:12px 0 6px}select,textarea,button{font:inherit}select,textarea{width:100%;padding:10px;border:1px solid #bdcad7;border-radius:9px;background:white}textarea{resize:vertical;min-height:105px}button{padding:10px 16px;border:0;border-radius:9px;background:#0d5e96;color:white;cursor:pointer}button.secondary{background:#e5ecf3;color:#1b3652}button:disabled{opacity:.5;cursor:not-allowed}.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.group{border:1px solid #dbe3ed;border-radius:11px;padding:12px;margin-top:12px}.group h3{margin:0 0 8px;font-size:1rem}.note{background:#fff7df;padding:12px;border-radius:9px}#message{white-space:pre-wrap}audio{width:100%;margin-top:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere}small{color:#53667c}</style></head>
+<body><main class="wrap"><header><strong>ميزان · مختبر الصوت المصري</strong><a href="/dashboard">العودة للوحة التحكم</a></header>
+<h1>تجربة أصوات TTSForFree</h1><p class="muted">مختبر إداري محمي. لا يغيّر محادثات المرضى الحية ولا يفعّل أي مزود تلقائيًا.</p>
+<section class="card"><div class="controls"><button class="secondary" id="reload">تحديث اللغات والحدود</button><span id="load-status" role="status">جارٍ تحميل الإعدادات...</span></div>
+<label for="language">اللغة / اللهجة</label><select id="language" disabled><option>جارٍ التحميل...</option></select>
+<div class="group"><h3>الأصوات المفضلة</h3><div id="favorites">جارٍ التحميل...</div></div>
+<div class="group"><h3>أصواتي المخصصة</h3><div id="custom">جارٍ التحميل...</div></div>
+<div class="group"><h3>الأصوات في كتالوج اللغة المختارة</h3><div id="catalog">اختر اللغة أولًا</div></div>
+<label for="voice">الصوت المختار</label><select id="voice"><option value="">اختر صوتًا من المجموعات</option></select>
+<div class="controls"><button class="secondary" id="detail" disabled>معاينة تفاصيل الصوت والتكلفة</button></div><div id="voice-info" aria-live="polite"></div>
+</section>
+<section class="card"><label for="text">النص المصري التجريبي</label><textarea id="text">أهلاً بحضرتك، معاك ميزان، المساعد الذكي للعيادة. تحب أحجزلك معاد، ولا عندك استفسار أقدر أساعدك فيه؟</textarea>
+<div class="controls"><small id="count">0 حرف</small><button id="create" disabled>توليد عينة صوتية</button><button class="secondary" id="cancel" disabled>إيقاف متابعة الحالة</button><button class="secondary" id="retry" hidden>إعادة فحص الحالة</button></div>
+<p id="message" role="status"></p><audio controls id="player" hidden></audio><a id="download" hidden target="_blank" rel="noopener noreferrer">فتح أو تنزيل العينة</a></section>
+<p class="note">الخدمة بتخصم Credits حسب الصوت المختار. التوليد غير متزامن؛ لا نستعمله في المكالمات الحية قبل اختبارات الكمون والتداخل والمقاطعة.</p></main><script src="/js/ttsforfree-studio.js" defer></script></body></html>

@@ -12,6 +12,7 @@
 // ============================================================================
 
 import { MizanVoiceAgent, routeAgentRequest } from "./agent";
+import { ttsForFreeRoute } from "./lib/ttsforfree";
 import { resolveTenant, resolveTenantByDomain, getTenantKnowledge, invalidateTenantCache, invalidateGlobalCache, DEFAULT_MIZAN_VOICE_ID } from "./lib/tenant";
 import { getSessionUser, createSessionResponse, clearSessionCookie, canAccessTenant, hashPassword, verifyPassword } from "./lib/auth";
 import { encryptPII, decryptPII, redactPII } from "./lib/crypto";
@@ -46,6 +47,7 @@ interface Env {
   ADMIN_PASSKEY_HASH: string;
   DEEPGRAM_API_KEY?: string;
   ELEVENLABS_TTS_KEY?: string;
+  TTSFORFREE_API_KEY?: string;
   MIZAN_VOICE_ID?: string;
   VOICE_WS_BASE: string;
   PRIMARY_LLM: string;
@@ -113,6 +115,15 @@ export default {
     // API routes
     if (url.pathname.startsWith("/api/")) {
       return handleApi(request, env, url, ctx);
+    }
+
+    // Protected TTSForFree evaluation studio. No patient-facing changes.
+    if (url.pathname === "/tts-studio" && request.method === "GET") {
+      const user = await getSessionUser(request, env);
+      if (!user || user.role !== "super_admin") return new Response("Forbidden", {status:403,headers:securityHeaders});
+      const asset = new URL("/tts-studio.html", request.url);
+      const response = await env.ASSETS.fetch(new Request(asset.toString()));
+      return new Response(response.body,{status:response.status,headers:{...securityHeaders,"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"}});
     }
 
     // Embeddable widget script: /embed/:slug.js
@@ -623,6 +634,7 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
   if (user.role !== "super_admin") return json({ error: "Forbidden" }, 403);
 
   const path = url.pathname;
+  if (path.startsWith("/api/admin/ttsforfree/")) return ttsForFreeRoute(request,env,url);
   const opsMatch=path.match(/^\/api\/admin\/tenants\/([a-z0-9][a-z0-9-]{1,62})\/(billing|usage|metrics|reports\/weekly)$/u);
   if(opsMatch){
     if(!await env.DB.prepare('SELECT 1 FROM tenants WHERE slug=?').bind(opsMatch[1]).first())return json({error:'Tenant not found'},404);

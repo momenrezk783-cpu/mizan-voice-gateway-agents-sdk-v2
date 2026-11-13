@@ -199,3 +199,35 @@ Before deploying, authenticate Wrangler and check that the existing Worker has
 `LANGFUSE_*` settings. Local `.env` and `.dev.vars` files do not upload production
 secrets. Review the effective HQ voice in the admin console; its saved voice ID
 is read from D1 and overrides the default for HQ calls.
+
+## TTSForFree audio evaluation (opt-in; admin only)
+
+This does **not** replace ElevenLabs in live patient calls. TTSForFree's documented
+`CreateBy` is asynchronous; a live-voice migration requires audio latency and
+interruption tests before promotion. Mizan owns its turn timing, so `CreateBy`,
+not `CreateMulti` or `CreateSrt`, is the applicable workflow.
+
+1. Obtain an API key from https://ttsforfree.com/en/profile/.
+2. For local dev put `TTSFORFREE_API_KEY=...` in your untracked `.dev.vars`.
+   For Cloudflare set `npx wrangler secret put TTSFORFREE_API_KEY` on the
+   correct target; **never** put the real key in wrangler.toml, source, logs,
+   URLs, browser storage or this README.
+3. Run `npm run dev`, sign in as **super_admin**, then open `/tts-studio`.
+   The authenticated `/api/admin/ttsforfree/*` proxy loads languages, limits,
+   favorites, personal voices and per-language catalog from TTSForFree.
+4. Select `ar-EG` if offered, choose an exact voice token, review the voice
+   detail and `BaseCreditsPerCharacter`, then create a short synthetic sample.
+   The page preserves the returned job id in localStorage and only exposes
+   a final MP3 on SUCCESS. Provider 429/network/5xx status errors retry with
+   bounded backoff; status failures do not resubmit paid generation jobs.
+5. Run `npm run typecheck` and `npm run test:ttsforfree`.
+
+Known deployment gates: an authenticated provider account/key is required to
+validate the real response envelopes, catalog, Egyptian accent, credit usage,
+resumability and speech latency. Swagger may block unauthenticated automated
+access; review https://api.ttsforfree.com/swagger/index.html on launch.
+The preview studio deliberately has no patient call recording/transcription
+upload; **do not put patient-identifying content into samples**. TTSForFree
+notes free-tier content may be used to improve its service. Its paid plan
+commercial terms and Egyptian data processing commitments need review before
+any production patient use. The admin studio is not an SLA-backed live TTS path.

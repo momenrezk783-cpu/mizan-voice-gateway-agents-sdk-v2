@@ -6,3 +6,6 @@ LANGFUSE_BASE_URL=
 
 # Optional exact HTTPS host allowlist for custom calendar webhook adapters.
 # INTEGRATION_ALLOWED_HOSTS=booking.example.com
+
+# Optional: authenticated TTSForFree evaluation studio (server-side only)
+# TTSFORFREE_API_KEY=register-key-in-cloudflare-secrets
