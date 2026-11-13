@@ -1,5 +1,6 @@
 import type { BackgroundMessage } from '../agent';
 import { redactPII } from './crypto';
+import {settleCallUsage} from './billing';
 
 export async function processBackgroundMessage(msg: BackgroundMessage, env: {DB:D1Database}): Promise<void> {
   const eventId = msg.eventId ?? `${msg.type}:${msg.tenantSlug}:${msg.sessionId}:${msg.type === 'record_turn' ? `${msg.turnIndex ?? 0}:${msg.speaker ?? 'caller'}` : ''}`;
@@ -28,4 +29,5 @@ export async function processBackgroundMessage(msg: BackgroundMessage, env: {DB:
   }
   // D1 batch is transactional. A crash cannot leave the write without its dedupe marker.
   await env.DB.batch([mutation,env.DB.prepare(`INSERT OR IGNORE INTO background_events (event_id) VALUES (?)`).bind(eventId)]);
+  if(msg.type==='end_session')await settleCallUsage(env.DB,msg.tenantSlug,msg.sessionId,occurredAt);
 }

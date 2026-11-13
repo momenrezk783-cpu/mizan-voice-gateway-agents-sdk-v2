@@ -19,6 +19,7 @@ import { EMBEDDED_UI_ASSETS } from "./lib/ui-assets";
 import { parseSearchInput, searchClientData, searchAdminData } from "./lib/search";
 import { loginRateKey, loginThrottleCheck, recordFailedLogin } from "./lib/login-throttle";
 import { summarizeLatency } from "./lib/operational-metrics";
+import {operationsApi,runOperationsCron} from './lib/operations';
 import { isRequestStatus, listTenantRequests, updateTenantRequestStatus } from "./lib/crm";
 import {MIZAN_PROFILE} from "./lib/mizan-profile";
 import {submitQuote,listQuotes,updateQuote} from "./lib/quote-requests";
@@ -172,6 +173,7 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(Promise.all([
       expireStaleSessions(env),
+      runOperationsCron(env,_event.cron === '0 6 * * 1'),
       expirePilots(env),
       env.DB.prepare(`DELETE FROM quote_intake_limits WHERE reset_at < unixepoch() - 86400`).run(),
       env.DB.prepare(`DELETE FROM voice_admissions WHERE created_at < unixepoch() - 86400`).run(),
@@ -283,7 +285,7 @@ async function handleApi(
       if (!tenant) return json({error:"Tenant not found"},404);
       const ipKey = await privateVoiceKey(env.SESSION_SECRET,request.headers.get("CF-Connecting-IP") || "unknown");
       const ticket = await reserveVoiceCall(env.DB,tenant.slug,ipKey,tenant.max_concurrent_sessions,url.origin,env.SESSION_SECRET);
-      return ticket ? json(ticket) : json({error:"Call capacity or hourly budget exceeded"},429,{"Retry-After":"60"});
+      return ticket ? json(ticket) : json({error:"Call capacity or usage budget exceeded"},429,{"Retry-After":"60"});
     }
     if (path === "/api/public/quote-requests" && request.method === "POST") {
       return json(await submitQuote(await request.json<Record<string,unknown>>(),request.headers.get("CF-Connecting-IP") || "unknown",env),202);
@@ -379,6 +381,8 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
 
   const slug = user.tenantSlug;
   const path = url.pathname;
+  const operation=await operationsApi(request,env,slug,user.role);
+  if(operation)return operation;
 
   // Search is scoped exclusively to the tenant from the signed session.
   if (path === "/api/client/search" && request.method === "GET") {
@@ -429,7 +433,9 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
   if (sessionMatch && request.method === "GET") {
     const sessionId = sessionMatch[1];
     const session = await env.DB.prepare(
-      `SELECT * FROM call_sessions WHERE id = ? AND tenant_slug = ?`
+      `SELECT s.*,coalesce(o.ai_paused,0) AS ai_paused,o.escalation_target,o.evaluation_json
+       FROM call_sessions s LEFT JOIN call_operations o ON o.session_id=s.id AND o.tenant_slug=s.tenant_slug
+       WHERE s.id = ? AND s.tenant_slug = ?`
     ).bind(sessionId, slug).first();
 
     if (!session) return json({ error: "Session not found" }, 404);
@@ -440,15 +446,19 @@ async function portalApi(request: Request, env: Env, url: URL): Promise<Response
     if (!privateContact && session.caller_phone_enc) callerPhone = await decryptPII(session.caller_phone_enc as string, env);
 
     const turns = await env.DB.prepare(
-      `SELECT turn_index, speaker, transcript_redacted, latency_ms, created_at
-       FROM call_turns WHERE session_id = ? AND tenant_slug = ? ORDER BY turn_index ASC`
+      `SELECT t.turn_index,t.speaker,t.transcript_redacted,t.latency_ms,t.created_at,s.evaluation_score,o.evaluation_json
+       FROM call_turns t JOIN call_sessions s ON s.id=t.session_id AND s.tenant_slug=t.tenant_slug
+       LEFT JOIN call_operations o ON o.session_id=t.session_id AND o.tenant_slug=t.tenant_slug
+       WHERE t.session_id = ? AND t.tenant_slug = ? ORDER BY t.turn_index ASC`
     ).bind(sessionId, slug).all();
 
     return json({
       session: { id: session.id, call_status: session.call_status,
         selected_doctor: session.selected_doctor, selected_slot: session.selected_slot,
         booking_confirmed: session.booking_confirmed, started_at: session.started_at,
-        ended_at: session.ended_at, caller_name: callerName, caller_phone: callerPhone, caller_email: privateContact?.email ?? null },
+        ended_at: session.ended_at, ai_paused:session.ai_paused,escalation_target:session.escalation_target,
+        evaluation_score:session.evaluation_score,evaluation_json:session.evaluation_json,
+        caller_name: callerName, caller_phone: callerPhone, caller_email: privateContact?.email ?? null },
       turns: turns.results,
     });
   }
@@ -613,6 +623,12 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
   if (user.role !== "super_admin") return json({ error: "Forbidden" }, 403);
 
   const path = url.pathname;
+  const opsMatch=path.match(/^\/api\/admin\/tenants\/([a-z0-9][a-z0-9-]{1,62})\/(billing|usage|metrics|reports\/weekly)$/u);
+  if(opsMatch){
+    if(!await env.DB.prepare('SELECT 1 FROM tenants WHERE slug=?').bind(opsMatch[1]).first())return json({error:'Tenant not found'},404);
+    const mapped=new URL(request.url);mapped.pathname='/api/client/'+opsMatch[2];
+    return await operationsApi(new Request(mapped,request),env,opsMatch[1],user.role) ?? json({error:'Not found'},404);
+  }
 
   if (path === "/api/admin/quote-requests" && request.method === "GET") return json({requests:await listQuotes(env,url.searchParams.get("status") || undefined)});
   const quoteMatch=path.match(/^\/api\/admin\/quote-requests\/([a-f0-9-]{36})$/u);
@@ -982,6 +998,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string, e
     </button>
     <p class="tag" id="visualizer">دوس عشان تتكلم مع المساعد</p>
     <div class="call-controls" id="callControls">
+      <button type="button" id="interruptBtn" onclick="interruptAssistant()" hidden>مقاطعة المساعد</button>
       <div class="call-timer" id="timer">00:00</div>
       <button class="mute-button" id="muteBtn" onclick="toggleMute()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
@@ -1000,21 +1017,23 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string, e
   <script src="/js/private-contact-ui.js"></script>
   <script>
     const TENANT_SLUG=${JSON.stringify(tenant.slug)},SESSION_ID=${JSON.stringify(sessionId)},WS_BASE=${JSON.stringify(wsBase)};
-    const playbackSources=new Set();let playbackEpoch=0;
+    const playbackSources=new Set();let playbackEpoch=0;let humanPaused=false;let playbackBusy=false,playbackPending=0,playbackResumeAt=0;
     let ws=null,audioCtx=null,stream=null,audioSource=null,audioNode=null,calling=false,muted=false,audioSink=null,timerInt=null,startT=null,callAttempt=0,playbackTime=0;
     const privateContact=MizanPrivateContact.mount({
       send:message=>{if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(message))},
-      pause:()=>{if(stream)stream.getAudioTracks().forEach(track=>{track.enabled=false});if(audioSource)audioSource.disconnect();if(audioNode){audioNode.port.onmessage=null;audioNode.disconnect();audioNode=null}if(audioSink){audioSink.disconnect();audioSink=null}},
-      resume:()=>{if(calling&&stream){stream.getAudioTracks().forEach(track=>{track.enabled=!muted});connectMicrophone();document.getElementById('status').textContent='متصل — تحدث الآن'}},
+      pause:pauseMicrophone,
+      resume:resumeMicrophone,
       isActive:()=>calling
     });
+    function pauseMicrophone(){if(stream)stream.getAudioTracks().forEach(track=>{track.enabled=false});if(audioSource)audioSource.disconnect();if(audioNode){audioNode.port.onmessage=null;audioNode.disconnect();audioNode=null}if(audioSink){audioSink.disconnect();audioSink=null}}
+    function resumeMicrophone(){if(!calling||!stream||humanPaused||privateContact.paused)return false;stream.getAudioTracks().forEach(track=>{track.enabled=!muted});connectMicrophone();document.getElementById('status').textContent='متصل — تحدث الآن';return true}
     function requestPrivateContact(){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'contact_request'}))}
     function connectMicrophone(){
-      if(!audioCtx||!audioSource||privateContact.paused)return;
+      if(!audioCtx||!audioSource||privateContact.paused||humanPaused)return;
       const fresh=audioNode=new AudioWorkletNode(audioCtx,'pcm-processor');
       audioSource.connect(fresh);
       audioSink=audioCtx.createGain();audioSink.gain.value=0;fresh.connect(audioSink);audioSink.connect(audioCtx.destination);
-      fresh.port.onmessage=e=>{if(audioNode!==fresh||privateContact.paused||!calling||!ws||ws.readyState!==WebSocket.OPEN||muted)return;ws.send(e.data)};
+      fresh.port.onmessage=e=>{if(audioNode!==fresh||privateContact.paused||!calling||!ws||ws.readyState!==WebSocket.OPEN||muted||humanPaused||playbackBusy||Date.now()<playbackResumeAt)return;ws.send(e.data)};
     }
     async function toggleCall(){calling?endCall():startCall()}
     async function startCall(){
@@ -1058,27 +1077,33 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string, e
           try{
             const m=JSON.parse(e.data);
             if(privateContact.handle(m))return;
-            if(m.type==='control'&&m.command==='barge_in'){stopPlayback();return;}
+            if(m.type==='handoff'){
+              humanPaused=m.status==='human_required';
+              if(humanPaused){if(m.target!=='123')stopPlayback();pauseMicrophone();s.textContent=m.target==='123'?'حالة طارئة: اتصل بالإسعاف 123 فورًا. المساعد متوقف، ولا يوجد تحويل هاتفي تلقائي.':'المساعد متوقف لطلب تدخل بشري؛ لا توجد مكالمة بشرية موصولة تلقائيًا.';}
+              else {if(!privateContact.paused)resumeMicrophone();s.textContent='تم استئناف المساعد';}
+              return;
+            }
+            if(m.type==='control'&&m.command==='barge_in'){return;} // Unconfirmed VAD can be the assistant's own echo.
             if(m.type==='transcript')addTurn(m.speaker,m.text);
             if(m.type==='error'){
               console.error('Voice agent error:',{stage:m.stage||'unknown',message:m.message,details:m.details||null});
               s.textContent=m.message||'حدث خطأ في المساعد الصوتي';
               s.className='st error';
             }
-            if(!privateContact.paused&&m.type==='status'&&m.status==='stt_reconnecting'){
+            if(!privateContact.paused&&!humanPaused&&m.type==='status'&&m.status==='stt_reconnecting'){
               s.textContent='نعيد الاتصال بخدمة التعرف الصوتي...';s.className='st connecting';
             }
-            if(!privateContact.paused&&m.type==='status'&&m.status==='stt_unavailable'){
+            if(!privateContact.paused&&!humanPaused&&m.type==='status'&&m.status==='stt_unavailable'){
               s.textContent='خدمة التعرف الصوتي غير متاحة حالياً. أنهِ الاتصال وحاول مجدداً.';s.className='st error';
             }
-            if(!privateContact.paused&&m.type==='status'&&m.status==='stt_connected'){
+            if(!privateContact.paused&&!humanPaused&&m.type==='status'&&m.status==='stt_connected'){
               s.textContent='متصل — تحدث الآن';s.className='st';
             }
-            if(!privateContact.paused&&m.type==='status'&&m.status==='listening'){
+            if(!privateContact.paused&&!humanPaused&&m.type==='status'&&m.status==='listening'){
               s.textContent='متصل — تحدث الآن';
               s.className='st';
             }
-            if(!privateContact.paused&&m.type==='status'&&m.status==='audio_sent'){
+            if(!privateContact.paused&&!humanPaused&&m.type==='status'&&m.status==='audio_sent'){
               console.info('Agent audio received:',m.bytes,'bytes');
             }
           }catch(err){console.warn('Unrecognized voice message:',err)}
@@ -1090,22 +1115,31 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string, e
         if(attempt===callAttempt){endCall();s.textContent=err.name==='NotAllowedError'?'لم يتم السماح باستخدام الميكروفون':err.message||'تعذر تهيئة الصوت';s.className='st error'}
       }
     }
-    function endCall(errorText){stopPlayback();callAttempt++;calling=false;privateContact.end();document.getElementById('open-contact').hidden=true;const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
+    function endCall(errorText){humanPaused=false;stopPlayback();callAttempt++;calling=false;privateContact.end();document.getElementById('open-contact').hidden=true;const b=document.getElementById('callBtn'),ow=document.getElementById('orbWrapper'),s=document.getElementById('status'),c=document.getElementById('callControls'),w=document.getElementById('wave');
       b.classList.remove('active','connecting');ow.classList.remove('active','connecting');s.textContent=errorText||'انتهت المكالمة — جاهز لاتصال جديد';s.className=errorText?'st error':'st';c.classList.remove('visible');w.classList.add('idle');playbackTime=0;muted=false;document.getElementById('muteBtn').classList.remove('muted');document.getElementById('muteLabel').textContent='كتم';
       if(timerInt){clearInterval(timerInt);timerInt=null}if(ws){const oldWs=ws;ws=null;if(oldWs.readyState===WebSocket.CONNECTING||oldWs.readyState===WebSocket.OPEN)oldWs.close()}if(audioNode){audioNode.disconnect();audioNode=null}if(audioSink){audioSink.disconnect();audioSink=null}if(audioSource){audioSource.disconnect();audioSource=null}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}if(audioCtx){const oldCtx=audioCtx;audioCtx=null;oldCtx.close().catch(()=>{})}}
-    function toggleMute(){muted=!muted;if(stream)stream.getAudioTracks().forEach(track=>{track.enabled=!muted&&!privateContact.paused});const b=document.getElementById('muteBtn'),l=document.getElementById('muteLabel');muted?(b.classList.add('muted'),l.textContent='مكتوم'):(b.classList.remove('muted'),l.textContent='كتم')}
+    function toggleMute(){muted=!muted;if(stream)stream.getAudioTracks().forEach(track=>{track.enabled=!muted&&!privateContact.paused&&!humanPaused});const b=document.getElementById('muteBtn'),l=document.getElementById('muteLabel');muted?(b.classList.add('muted'),l.textContent='مكتوم'):(b.classList.remove('muted'),l.textContent='كتم')}
     function addTurn(sp,txt){const t=document.getElementById('transcript'),d=document.createElement('div');d.className='turn '+sp;
       const l=document.createElement('div');l.className='turn-label';l.textContent=sp==='caller'?'المتصل':'المساعد';
       const c=document.createElement('div');c.textContent=txt;d.appendChild(l);d.appendChild(c);t.appendChild(d);t.scrollTop=t.scrollHeight}
+    function finishPlayback(){
+      if(playbackSources.size||playbackPending)return;
+      playbackBusy=false;playbackResumeAt=Date.now()+250;
+      document.getElementById('interruptBtn').hidden=true;
+      if(calling&&!humanPaused&&!privateContact.paused&&document.getElementById('status').textContent==='المساعد بيتكلم...')document.getElementById('status').textContent='متصل — تحدث الآن';
+    }
+    function interruptAssistant(){stopPlayback();if(calling&&!humanPaused&&!privateContact.paused)document.getElementById('status').textContent='اتفضل، قولّي طلبك';}
     function stopPlayback(){
-      playbackEpoch++;
+      playbackEpoch++;playbackPending=0;
       for(const source of playbackSources){try{source.stop()}catch(err){}}
       playbackSources.clear();
+      finishPlayback();
       playbackTime=audioCtx?audioCtx.currentTime:0;
     }
     async function play(blob){
       if(!audioCtx)return;
       const epoch=playbackEpoch;
+      playbackBusy=true;playbackPending++;document.getElementById('interruptBtn').hidden=false;
       try{
         if(audioCtx.state==='suspended')await audioCtx.resume();
         const buf=await audioCtx.decodeAudioData(blob.slice(0));
@@ -1115,18 +1149,17 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string, e
         source.connect(audioCtx.destination);
         const startAt=Math.max(audioCtx.currentTime,playbackTime);
         playbackSources.add(source);
-        source.onended=()=>playbackSources.delete(source);
+        source.onended=()=>{playbackSources.delete(source);finishPlayback()};
         source.start(startAt);
         playbackTime=startAt+buf.duration;
         const s=document.getElementById('status');
-        s.textContent=privateContact.paused?'الميكروفون متوقف أثناء النموذج':'المساعد بيتكلم...';
-        s.className='st';
+        if(!humanPaused){s.textContent=privateContact.paused?'الميكروفون متوقف أثناء النموذج':'المساعد بيتكلم...';s.className='st';}
       }catch(err){
         console.error('Agent audio playback failed:',err);
         const s=document.getElementById('status');
         s.textContent='وصل الرد النصي لكن تعذر تشغيل الصوت. راجع إعدادات الصوت أو أعد المحاولة.';
         s.className='st error';
-      }
+      }finally{if(epoch===playbackEpoch){playbackPending--;finishPlayback()}}
     }
   </script>
 </body></html>`;

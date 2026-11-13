@@ -1,0 +1,112 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { stripTypeScriptTypes } from 'node:module';
+import { DatabaseSync } from 'node:sqlite';
+import {importTs} from './helpers/runtime.mjs';
+const ops=await importTs('src/lib/operations.ts');
+const providers=await importTs('src/lib/calendar-providers.ts');
+const voice=await importTs('src/lib/voice-access.ts');
+const auth=await importTs('src/lib/auth.ts');
+const {default:worker}=await importTs('src/index.ts');
+const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
+for(const file of ['schema.sql','migration-001.sql','migration-002.sql','migration-003.sql','migration-004.sql','migration-005.sql','migration-006.sql','migration-007.sql'])sqlite.exec(fs.readFileSync(file,'utf8'));
+function statement(sql,params=[]) {return {bind(...p){return statement(sql,p)},async first(){return sqlite.prepare(sql).get(...params)||null},async all(){return {results:sqlite.prepare(sql).all(...params)}},async run(){const r=sqlite.prepare(sql).run(...params);return {meta:{changes:Number(r.changes)}}}};}
+const env={DB:{prepare:statement,async batch(items){sqlite.exec('BEGIN');try{const results=[];for(const item of items)results.push(await item.run());sqlite.exec('COMMIT');return results;}catch(error){sqlite.exec('ROLLBACK');throw error;}}},CONTACT_ENC_KEY:Buffer.alloc(32,7).toString('base64'),AI:undefined,PRIMARY_LLM:'test',INTEGRATION_ALLOWED_HOSTS:'calendar.example.com'};
+let checks=0;async function test(name,fn){await fn();checks++;console.log('PASS '+name)};
+for(const slug of ['a','b'])sqlite.prepare("INSERT INTO tenants(id,slug,name)VALUES(?,?,?)").run(slug,slug,slug);
+const req=(p,method='GET',body)=>new Request('https://mizanconsult.com/api/client/'+p,{method,headers:{Origin:'https://mizanconsult.com','Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+await test('atomic signed admission, opt-in quota, settlement, abandoned tickets and repeatable schema',async()=>{
+ sqlite.exec(fs.readFileSync('migration-007.sql','utf8'));
+ sqlite.prepare('INSERT INTO tenant_billing(tenant_slug,monthly_seconds,max_call_seconds) VALUES(?,?,?)').run('a',300,300);
+ const secret='operations-test-secret-more-than-thirty-two-characters';
+ const one=await voice.reserveVoiceCall(env.DB,'a','ip-one',1,'https://mizanconsult.com',secret);assert.ok(one);
+ assert.equal(await voice.reserveVoiceCall(env.DB,'a','ip-two',1,'https://mizanconsult.com',secret),null);
+ assert.equal(await voice.claimVoiceCall(env.DB,'a',one.sessionId),true);
+ assert.equal(await voice.claimVoiceCall(env.DB,'a',one.sessionId),false);
+ sqlite.prepare("INSERT INTO call_sessions(id,tenant_slug) VALUES(?,'a')").run(one.sessionId);
+ const start=sqlite.prepare('SELECT started_at FROM usage_reservations WHERE session_id=?').get(one.sessionId).started_at;
+ await ops.settleUsage(env,'a',one.sessionId,start+60);await ops.settleUsage(env,'a',one.sessionId,start+200);
+ assert.equal(sqlite.prepare('SELECT used_seconds FROM usage_reservations WHERE session_id=?').get(one.sessionId).used_seconds,60);
+ assert.equal(await voice.reserveVoiceCall(env.DB,'a','ip-three',2,'https://mizanconsult.com',secret),null);
+ sqlite.prepare('UPDATE tenant_billing SET monthly_seconds=600 WHERE tenant_slug=?').run('a');
+ assert.ok(await voice.reserveVoiceCall(env.DB,'a','ip-four',2,'https://mizanconsult.com',secret));
+ const unconfigured=await voice.reserveVoiceCall(env.DB,'b','ip-five',2,'https://mizanconsult.com',secret);assert.ok(unconfigured);
+ await voice.releaseVoiceCall(env.DB,'b',unconfigured.sessionId);
+ assert.equal(sqlite.prepare('SELECT used_seconds FROM usage_reservations WHERE session_id=?').get(unconfigured.sessionId).used_seconds,0);
+});
+await test('billing permissions, CSRF and integer validation',async()=>{
+ const body={monthly_seconds:900,max_call_seconds:300,rate_piasters_per_minute:150};
+ assert.equal((await ops.operationsApi(req('billing','PUT',body),env,'a','clinic_admin')).status,403);
+ assert.equal((await ops.operationsApi(req('billing','PUT',body),env,'a','super_admin')).status,200);
+ const evil=new Request('https://mizanconsult.com/api/client/billing',{method:'PUT',headers:{Origin:'https://evil.example'},body:JSON.stringify(body)});
+ assert.equal((await ops.operationsApi(evil,env,'a','super_admin')).status,403);
+ assert.equal((await ops.operationsApi(req('billing','PUT',{...body,monthly_seconds:0.5}),env,'a','super_admin')).status,400);
+ assert.equal(ops.usageCharge(61,150),153);
+});
+await test('weekly interval and metrics include zero denominators and tenant isolation',async()=>{
+ assert.deepEqual(ops.previousWeek(Date.parse('2026-11-12T10:00:00Z')),[Date.parse('2026-11-02T00:00:00Z')/1000,Date.parse('2026-11-09T00:00:00Z')/1000]);
+ sqlite.prepare("INSERT INTO call_sessions(id,tenant_slug,started_at,ended_at,intent_id,intent_resolved,booking_confirmed,caller_phone_enc) VALUES('s1','a',100,200,'book_appointment',1,1,'enc')").run();
+ sqlite.prepare("INSERT INTO call_sessions(id,tenant_slug,started_at,ended_at,handed_off) VALUES('s2','a',110,210,1),('s3','b',120,220,0)").run();
+ const s=await ops.aggregateStats(env,'a',0,300);assert.equal(s.total_calls,2);assert.equal(s.qualified_leads,1);assert.equal(s.confirmed_bookings,1);assert.equal(s.resolution_rate_percent,50);
+ assert.equal((await ops.aggregateStats(env,'b',0,1)).resolution_rate_percent,null);
+ await ops.runOperationsCron(env);await ops.runOperationsCron(env);assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM weekly_reports').get().n,2);
+});
+await test('knowledge history and gaps deduplicate without auto-publishing',async()=>{
+ sqlite.prepare("INSERT INTO tenant_knowledge(id,tenant_slug,category,faq_text) VALUES('k','a','faq','One')").run();
+ sqlite.prepare("UPDATE tenant_knowledge SET faq_text='Two' WHERE id='k'").run();
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM knowledge_versions').get().n,2);
+ for(let i=0;i<2;i++)await ops.captureKnowledgeGap(env,'a','s1',1,'01012345678 email@example.com','مش عارف');
+ const gap=sqlite.prepare('SELECT * FROM knowledge_gaps').get();assert.equal(gap.status,'open');assert.ok(!gap.question.includes('01012345678'));assert.ok(!gap.question.includes('@'));
+ const other=await ops.operationsApi(req('knowledge/k/versions'),env,'b','clinic_admin');assert.equal((await other.json()).results.length,0);
+});
+await test('whole-call QA is visible for both early and late queue turns without duplicate storage',async()=>{
+ sqlite.prepare("INSERT INTO call_sessions(id,tenant_slug) VALUES('qa-session','a')").run();
+ sqlite.prepare("INSERT INTO call_turns(id,session_id,tenant_slug,turn_index,speaker,transcript_redacted) VALUES('t1','qa-session','a',1,'agent','test')").run();
+ sqlite.prepare("UPDATE call_sessions SET evaluation_score=88 WHERE id='qa-session'").run();
+ sqlite.prepare("INSERT INTO call_operations(session_id,tenant_slug,evaluation_json) VALUES('qa-session','a','{}')").run();
+ sqlite.prepare("INSERT INTO call_turns(id,session_id,tenant_slug,turn_index,speaker,transcript_redacted) VALUES('t2','qa-session','a',2,'agent','test')").run();
+ env.SESSION_SECRET='operations-test-secret-more-than-thirty-two-characters';
+ const cookie=(await auth.createSessionResponse({id:'a',email:'test@example.test',role:'clinic_admin',tenantSlug:'a'},env)).split(';')[0];
+ const response=await worker.fetch(new Request('https://mizanconsult.com/api/client/sessions/qa-session',{headers:{Cookie:cookie}}),env,{waitUntil(){}});
+ assert.equal(response.status,200);const result=await response.json();
+ assert.deepEqual(result.turns.map(x=>x.evaluation_score),[88,88]);assert.ok(result.turns.every(x=>x.evaluation_json==='{}'));
+});
+await test('human control tenant isolation and sticky handoff attribution',async()=>{
+ sqlite.prepare("UPDATE call_sessions SET call_status='active',ended_at=NULL WHERE id='s1'").run();
+ assert.equal((await ops.operationsApi(req('sessions/s1/handoff','POST',{}),env,'b','clinic_admin')).status,404);
+ assert.equal((await ops.operationsApi(req('sessions/s1/handoff','POST',{}),env,'a','clinic_admin')).status,200);
+ await ops.operationsApi(req('sessions/s1/resume','POST',{}),env,'a','clinic_admin');
+ const s=sqlite.prepare("SELECT o.ai_paused,s.handed_off FROM call_sessions s JOIN call_operations o ON o.session_id=s.id AND o.tenant_slug=s.tenant_slug WHERE s.id='s1'").get();assert.equal(s.ai_paused,0);assert.equal(s.handed_off,1);
+});
+await test('Cal.com / Zoho requests, credentials, confirmation and Cairo DST',async()=>{
+ const slots={name:'Test',phone:'01012345678',email:'test@example.com',date:'2026-11-15',time:'12:30'};
+ assert.equal(providers.cairoStart(slots.date,slots.time),'2026-11-15T10:30:00.000Z');
+ assert.equal(providers.cairoStart('2026-07-15','12:30'),'2026-07-15T09:30:00.000Z');
+ assert.throws(()=>providers.cairoStart('2026-02-31','12:30'));
+ const cal=providers.calendarRequest('calcom',{event_type_id:12},'secret',slots,'key','a','s1');assert.equal(JSON.parse(cal.init.body).attendee.timeZone,'Africa/Cairo');assert.equal(cal.init.redirect,'error');
+ const zoho=providers.calendarRequest('zoho',{host:'www.zohoapis.com',service_id:'1',staff_id:'2'},'secret',slots,'key','a','s1');assert.equal(zoho.init.body.get('from_time'),'15-Nov-2026 12:30:00');
+ assert.equal(providers.confirmedBookingId('zoho',{response:{status:'success',returnvalue:{status:'upcoming',booking_id:'z1'}}}),'z1');
+ assert.equal(providers.confirmedBookingId('calcom',{status:'success',data:{status:'pending',uid:'c1'}}),null);
+});
+await test('SSRF prevention, encrypted key write-only, confirmed booking replay',async()=>{
+ assert.throws(()=>ops.validateWebhook('http://calendar.example.com','calendar.example.com'));
+ assert.throws(()=>ops.validateWebhook('https://127.0.0.1','calendar.example.com'));
+ assert.throws(()=>ops.validateWebhook('https://calendar.example.com.evil.test','calendar.example.com'));
+ const body={provider:'webhook',url:'https://calendar.example.com/book',api_key:'SECRET0123456789SECRET'};
+ assert.equal((await ops.operationsApi(req('integrations/calendar','PUT',body),env,'a','clinic_admin')).status,200);
+ const stored=sqlite.prepare('SELECT * FROM calendar_integrations').get();assert.ok(!stored.secret_enc.includes('SECRET'));
+ const visible=await (await ops.operationsApi(req('integrations/calendar'),env,'a','clinic_admin')).text();assert.ok(!visible.includes('secret_enc'));assert.ok(!visible.includes('SECRET'));
+ let calls=0;globalThis.fetch=async()=>{calls++;return Response.json({confirmed:true,booking_id:'remote-1'})};
+ const slots={name:'Test',phone:'01012345678',date:'2026-11-15',time:'12:30'};
+ assert.equal((await ops.calendarBooking(env,'a','s1','id1',slots)).ok,true);
+ assert.equal((await ops.calendarBooking(env,'a','s1','id1',slots)).ok,true);assert.equal(calls,1);
+ globalThis.fetch=async()=>{calls++;throw new Error('Timeout')};
+ assert.equal((await ops.calendarBooking(env,'a','s1','id2',slots)).ok,false);
+ assert.equal((await ops.calendarBooking(env,'a','s1','id2',slots)).ok,false);assert.equal(calls,2);
+});
+await test('simulation uses real guarded manager with mocked side effects',async()=>{
+ const r=await ops.operationsApi(req('qa/simulate','POST',{utterances:['عايز احجز ميعاد','مش قادر اتنفس']}),env,'a','clinic_admin');
+ assert.equal(r.status,200);const b=await r.json();assert.equal(b.external_actions,false);assert.equal(b.frames.length,2);
+});
+console.log(`${checks} operations test groups passed`);
