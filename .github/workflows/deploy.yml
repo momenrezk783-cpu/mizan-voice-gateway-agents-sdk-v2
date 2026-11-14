@@ -49,7 +49,7 @@ jobs:
       - name: Verify private-contact schema exists (read only)
         run: >-
           npx wrangler d1 execute mizan-portal-db --remote
-          --command "SELECT tenant_slug, session_id, details_enc, updated_at FROM call_contact_details LIMIT 0; SELECT id, request_key, details_enc, status, created_at, updated_at FROM quote_requests LIMIT 0; SELECT rate_key, hits, reset_at, last_request FROM quote_intake_limits LIMIT 0; SELECT session_id,tenant_slug,revision FROM call_operations LIMIT 0; SELECT session_id,started_at,admitted_at FROM usage_reservations LIMIT 0; SELECT tenant_slug,monthly_seconds,max_call_seconds FROM tenant_billing LIMIT 0; SELECT tenant_slug FROM weekly_reports LIMIT 0; SELECT tenant_slug FROM calendar_integrations LIMIT 0; SELECT tenant_slug FROM booking_operations LIMIT 0; SELECT tenant_slug FROM knowledge_versions LIMIT 0; SELECT tenant_slug FROM knowledge_gaps LIMIT 0;"
+          --command "SELECT tenant_slug, session_id, details_enc, updated_at FROM call_contact_details LIMIT 0; SELECT id, request_key, details_enc, status, created_at, updated_at FROM quote_requests LIMIT 0; SELECT rate_key, hits, reset_at, last_request FROM quote_intake_limits LIMIT 0;"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

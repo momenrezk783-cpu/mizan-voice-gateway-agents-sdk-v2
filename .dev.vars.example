@@ -3,6 +3,3 @@ LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 # Use the base URL for your project's region or HTTPS self-hosted instance.
 LANGFUSE_BASE_URL=
-
-# Optional exact HTTPS host allowlist for custom calendar webhook adapters.
-# INTEGRATION_ALLOWED_HOSTS=booking.example.com

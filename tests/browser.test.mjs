@@ -9,7 +9,7 @@ const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'mizan-browser-'));
 const db=new SqliteD1(path.join(temporary,'app.sqlite'));
 const {default:worker}=await importTs('src/index.ts');
 const auth=await importTs('src/lib/auth.ts');
-for(const file of ['schema.sql','migration-001.sql','migration-002.sql','migration-003.sql','migration-004.sql','migration-005.sql','migration-006.sql','migration-007.sql'])db.apply(file);
+for(const file of ['schema.sql','migration-001.sql','migration-002.sql','migration-003.sql','migration-004.sql','migration-005.sql'])db.apply(file);
 await db.prepare(`INSERT INTO tenants(id,slug,name,industry,max_concurrent_sessions) VALUES ('hq','mizan-hq','Mizan Consult','general',3)`).run();
 await db.prepare(`INSERT INTO tenant_voice_config(tenant_slug,system_prompt) VALUES ('mizan-hq','legacy')`).run();
 const env={DB:db,SESSION_SECRET:'browser-test-session-secret-with-more-than-32-characters',CONTACT_ENC_KEY:Buffer.alloc(32,23).toString('base64'),TENANT_CONFIG:{get:async()=>null,put:async()=>{},delete:async()=>{}},VOICE_WS_BASE:''};
@@ -93,29 +93,6 @@ try {
   await page.waitForTimeout(500);
   const initialFrames=await page.evaluate(()=>window.__voiceSockets[0].frames);
   assert.ok(initialFrames>0,'real AudioWorklet must be producing PCM frames before the form');
-  // Decode and play a real one-second WAV; raw VAD must not cut the reply.
-  async function emitAudio(){await page.evaluate(()=>{
-    const n=16000,buffer=new ArrayBuffer(44+n*2),v=new DataView(buffer);
-    function str(offset,text){for(let i=0;i<text.length;i++)v.setUint8(offset+i,text.charCodeAt(i));}
-    str(0,'RIFF');v.setUint32(4,36+n*2,true);str(8,'WAVE');str(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);str(36,'data');v.setUint32(40,n*2,true);
-    for(let i=0;i<n;i++)v.setInt16(44+i*2,Math.sin(i*2*Math.PI*440/16000)*2000,true);
-    window.__voiceSockets[0].onmessage({data:buffer});
-  });}
-  await emitAudio();await expect.poll(()=>page.evaluate(()=>playbackSources.size)).toBe(1);
-  const duringPlayback=await page.evaluate(()=>window.__voiceSockets[0].frames);
-  await page.evaluate(()=>window.__voiceSockets[0].emit({type:'control',command:'barge_in'}));
-  await page.waitForTimeout(350);
-  assert.equal(await page.evaluate(()=>playbackSources.size),1,'echo VAD cannot stop active audio');
-  assert.equal(await page.evaluate(()=>window.__voiceSockets[0].frames),duringPlayback,'speaker echo must not enter STT');
-  await expect.poll(()=>page.evaluate(()=>playbackBusy)).toBe(false);
-  await expect.poll(()=>page.evaluate(count=>window.__voiceSockets[0].frames>count,duringPlayback)).toBe(true);
-  await emitAudio();await expect.poll(()=>page.evaluate(()=>playbackSources.size)).toBe(1);
-  await page.locator('#interruptBtn').click();assert.equal(await page.evaluate(()=>playbackSources.size),0);
-  await page.evaluate(()=>window.__voiceSockets[0].emit({type:'handoff',status:'human_required'}));
-  assert.equal(await page.evaluate(()=>stream.getAudioTracks()[0].enabled),false);
-  await page.evaluate(()=>window.__voiceSockets[0].emit({type:'handoff',status:'resumed'}));
-  assert.equal(await page.evaluate(()=>stream.getAudioTracks()[0].enabled),true);
-  console.log('PASS real WAV full playback despite echo VAD, microphone echo gating, natural completion and explicit interruption');
   await page.locator('#open-contact').click();
   await expect(page.getByRole('dialog')).toBeVisible();
   assert.equal(await page.evaluate(()=>stream.getAudioTracks()[0].enabled),false);

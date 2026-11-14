@@ -295,7 +295,6 @@ export async function executeTenantBusinessAction(opts: {
   contactEncKey?: string;
   webhookUrl?: string | null;
   webhookSecret?: string | null;
-  verifiedCalendarBooking?: boolean; // Set only by the server after a confirmed calendar receipt.
 }): Promise<ActionRunResult> {
   const { db, sessionId, tenantSlug, action, slots, idempotencyKey, contactEncKey } = opts;
   const callerName = (slots.name || "").trim();
@@ -418,8 +417,7 @@ export async function executeTenantBusinessAction(opts: {
   }
 
   // A provider must return an explicit confirmation receipt; HTTP 2xx alone only means accepted.
-  let providerConfirmed = action === "book_appointment" && opts.verifiedCalendarBooking === true;
-  if(providerConfirmed)await db.prepare(`UPDATE call_sessions SET booking_confirmed=1 WHERE id=? AND tenant_slug=?`).bind(sessionId,tenantSlug).run();
+  let providerConfirmed = false;
   if (opts.webhookUrl) {
     let parsedUrl: URL;
     try {
@@ -520,7 +518,7 @@ export async function updateCallSessionOutcome(
         `UPDATE call_sessions
          SET intent_id = COALESCE(?, intent_id),
              intent_resolved = COALESCE(?, intent_resolved),
-             handed_off = MAX(handed_off, COALESCE(?, handed_off)),
+             handed_off = COALESCE(?, handed_off),
              end_reason = COALESCE(?, end_reason),
              total_turns = COALESCE(?, total_turns),
              honorific_hits = COALESCE(?, honorific_hits),

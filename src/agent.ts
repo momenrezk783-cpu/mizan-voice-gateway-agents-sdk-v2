@@ -5,7 +5,6 @@
 
 import { Agent, routeAgentRequest, type Connection } from "agents";
 import { generateText } from "ai";
-import {calendarBooking,captureKnowledgeGap} from "./lib/operations";
 import { VoiceTrace, generationUsage, type TracingEnv } from "./lib/tracing";
 import { synthesizeDialogueAudio } from "./lib/elevenlabs-tts";
 import { createAI, type CloudflareLanguageModelId } from "agents/models/ai-sdk";
@@ -69,7 +68,6 @@ import {
 } from "./lib/deepgram-stt";
 
 export interface Env extends TracingEnv {
-  INTEGRATION_ALLOWED_HOSTS?:string;
   DB: D1Database;
   TENANT_CONFIG: KVNamespace;
   AUDIO_BUCKET?: R2Bucket;
@@ -131,12 +129,6 @@ export class MizanVoiceAgent extends Agent<Env> {
   private turnCount = 0;
   private callStartTime = 0;
   private initialized = false;
-  private aiPaused=false;
-  private hadHumanHandoff=false;
-  private operationsRevision=0;
-  private operationsEpoch=0;
-  private handoffHoldRevision:number|null=null;
-  private operationsTimer:ReturnType<typeof setInterval>|null=null;
   private sessionClosed = false;
   private activeConnection: Connection | null = null;
   private deepgramSession: DeepgramStreamingSession | null = null;
@@ -183,11 +175,6 @@ export class MizanVoiceAgent extends Agent<Env> {
 
     this.tenantName = this.tenantSlug === "mizan-hq" ? MIZAN_PROFILE.status : tenant.name || this.tenantSlug;
     this.tenantIndustry = tenant.industry || "general";
-    this.intents=structuredClone(DEFAULT_INTENTS);
-    const calendar=await this.env.DB.prepare("SELECT provider FROM calendar_integrations WHERE tenant_slug=? AND enabled=1").bind(this.tenantSlug).first<{provider:string}>();
-    if(calendar?.provider==='calcom')for(const intent of this.intents)if(intent.action==='book_appointment'){
-      const email=intent.slots.find(slot=>slot.name==='email');if(email){email.required=true;email.label='attendee email (private form)';}
-    }
 
     const globalConfig = await getGlobalVoiceConfig(this.env);
     this.industryGuard = await getIndustryGuard(this.tenantIndustry,this.env);
@@ -305,13 +292,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     this.releaseCallKeepAlive?.();
     this.releaseCallKeepAlive = await this.keepAlive();
 
-    await this.syncOperations(connection);
-    if(this.sessionClosed)return;
-    if(!this.aiPaused)this.startStt(connection);
-    this.operationsTimer=setInterval(()=>{void this.syncOperations(connection).catch(()=>{
-      this.aiPaused=true;this.deepgramSession?.close();this.deepgramSession=null;
-      connection.send(JSON.stringify({type:'handoff',status:'human_required',auto_dial:false}));
-    });},2000);
+    this.startStt(connection);
     connection.send(
       JSON.stringify({
         type: "status",
@@ -330,7 +311,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       (this.env.DEEPGRAM_API_KEY || "").trim(),
       {
         onInterimTranscript: (interimText) => {
-          if (this.sessionClosed || this.contactPaused || this.aiPaused || this.processingTurn || this.deepgramSession !== session) return;
+          if (this.sessionClosed || this.contactPaused || this.processingTurn || this.deepgramSession !== session) return;
           // Interim transcripts are never forwarded to the LLM conversation engine.
           // Send lightweight status indicator only.
           if (interimText) {
@@ -342,11 +323,12 @@ export class MizanVoiceAgent extends Agent<Env> {
           }
         },
         onSpeechStarted: () => {
-          if(this.sessionClosed || this.contactPaused || this.aiPaused || this.deepgramSession !== session)return;
-          // Raw VAD may be loudspeaker echo. Interruption requires the caller's explicit browser control; never cut TTS on SpeechStarted alone.
+          if(this.sessionClosed || this.contactPaused || this.deepgramSession !== session)return;
+          this.metrics.bargeIns++;
+          connection.send(JSON.stringify({type:"control",command:"barge_in"}));
         },
         onFinalTranscript: async (finalText, _confidence, detectedLanguage) => {
-          if (this.deepgramSession === session && !this.contactPaused && !this.aiPaused) await this.handleFinalTranscript(connection, finalText, detectedLanguage);
+          if (this.deepgramSession === session && !this.contactPaused) await this.handleFinalTranscript(connection, finalText, detectedLanguage);
         },
         onError: (error) => {
           console.error("Deepgram STT stream error");
@@ -400,7 +382,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     this.contactPending={id:crypto.randomUUID(),expires:Date.now()+300000,intent:this.cmSession.intent,phase:"editing"};
     this.contactPaused=true;
     this.deepgramSession?.close(); this.deepgramSession=null;
-    connection.send(JSON.stringify({type:"contact_required",requestId:this.contactPending.id,fields:["name","phone",...(spec.slots.some(s=>s.name==="email")?["email"]:[])],requiredFields:spec.slots.filter(s=>s.required).map(s=>s.name)}));
+    connection.send(JSON.stringify({type:"contact_required",requestId:this.contactPending.id,fields:["name","phone",...(spec.slots.some(s=>s.name==="email")?["email"]:[])]}));
   }
 
   private async handleContactControl(connection:Connection,control:Record<string,unknown>) {
@@ -408,7 +390,7 @@ export class MizanVoiceAgent extends Agent<Env> {
     const pending=this.contactPending;
     if(!pending || control.requestId!==pending.id || pending.intent!==this.cmSession.intent) return;
     if(control.type==="contact_resume" && pending.phase==="saved") {
-      pending.phase="resuming"; if(!this.aiPaused)this.startStt(connection); return;
+      pending.phase="resuming"; this.startStt(connection); return;
     }
     if(control.type==="contact_cancel" && pending.phase==="editing") {
       pending.phase="saved"; this.contactDeclined=true;
@@ -421,7 +403,6 @@ export class MizanVoiceAgent extends Agent<Env> {
     pending.phase="saving";
     try {
       const contact=validatePrivateContact(control.contact);
-      if(this.intents.find(i=>i.id===pending.intent)?.slots.some(s=>s.name==='email'&&s.required) && !contact.email)throw new Error('Attendee email required');
       await saveCallContact(this.env.DB,this.tenantSlug!,this.sessionId!,contact,this.env.CONTACT_ENC_KEY);
       if(this.sessionClosed || this.contactPending!==pending) return;
       this.privateContact=contact;
@@ -462,7 +443,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       }
 
       if (String(control.type).startsWith("contact_")) { await this.handleContactControl(connection,control); return; }
-      if (this.contactPaused || this.aiPaused) return;
+      if (this.contactPaused) return;
       if (control.type === "audio_format") {
         this.clientAudioFormat = control.encoding === "float32" ? "float32" : "linear16";
         return;
@@ -474,7 +455,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       return;
     }
 
-    if (this.contactPaused || this.aiPaused) return;
+    if (this.contactPaused) return;
     // Do not accept audio before `onConnect` initializes the Deepgram session or after close
     if (!this.deepgramSession || this.activeConnection !== connection) {
       return;
@@ -493,7 +474,6 @@ export class MizanVoiceAgent extends Agent<Env> {
     }
 
     this.noteSpokenName(transcript);
-    if(this.activeConnection){await this.syncOperations(connection);if(this.aiPaused)return;}
     const cleaned = this.protect(transcript.trim());
     if (!cleaned) return;
 
@@ -578,20 +558,14 @@ export class MizanVoiceAgent extends Agent<Env> {
       secureContact:true,
       ctx: this.callContext,
       intents: this.intents,
-      runAction: async (action, slots, idempotencyKey) => {
-        if(this.activeConnection)await this.syncOperations(this.activeConnection);
-        if(this.aiPaused || this.sessionClosed)return {ok:false,detail:'Session paused or ended'};
+      runAction: (action, slots, idempotencyKey) => {
         if (!this.privateContact) return Promise.resolve({ok:false,detail:"Complete the private on-screen contact form before executing this request."});
-        const privateSlots={...slots,...this.privateContact};
-        const calendar=action==='book_appointment' ? await calendarBooking(this.env,this.tenantSlug!,this.sessionId!,idempotencyKey,privateSlots) : null;
-        if(calendar && !calendar.ok)return calendar;
         return executeTenantBusinessAction({
           db: this.env.DB,
           sessionId: this.sessionId!,
           tenantSlug: this.tenantSlug!,
           action,
-          slots: privateSlots,
-          verifiedCalendarBooking:calendar?.ok===true,
+          slots: {...slots,...this.privateContact},
           idempotencyKey,
           contactEncKey: this.env.CONTACT_ENC_KEY
         });
@@ -603,7 +577,6 @@ export class MizanVoiceAgent extends Agent<Env> {
   private async respondToTranscript(connection: Connection, transcript: string, voiceTrace: VoiceTrace = VoiceTrace.start({}, "test", "test")) {
     if (this.sessionClosed || !this.tenantSlug || !this.sessionId) return;
     const turnStart = Date.now();
-    const operationsEpoch=this.operationsEpoch;
     this.turnCount++;
 
     this.noteSpokenName(transcript);
@@ -736,13 +709,6 @@ export class MizanVoiceAgent extends Agent<Env> {
     }
 
     if(this.tenantSlug === "mizan-hq" && /(?:شركة\s+مسجلة|ذات مسؤولية محدودة|منشأة فردية مقيدة|امتثال كامل|معتمدون رسميًا)/u.test(reply)) reply="Mizan Consult مؤسسة ميزان (تحت التأسيس) في الإسكندرية، مصر. بنحدد ضوابط حماية البيانات حسب كل مشروع، ومش بندّعي تسجيل شركة أو امتثال قانوني كامل. تقدر تراجع صفحات التعريف والخصوصية والشروط على الموقع.";
-    // Unclear Arabic must never produce a mixed-language clarification.
-    if(this.responseLanguage === "ar") {
-      const withoutIdentifiers=reply.replace(/https?:\/\/\S+|[\w.+-]+@[\w.-]+\.[a-z]+/giu,"");
-      const englishWords=withoutIdentifiers.match(/\b[A-Za-z]{2,}\b/gu)?.length ?? 0;
-      const arabicWords=withoutIdentifiers.match(/[\u0621-\u064a]{2,}/gu)?.length ?? 0;
-      if(englishWords>=5 && englishWords>arabicWords/2)reply="معلش، الكلام ما وصلنيش واضح. ممكن تقولّي طلبك تاني؟";
-    }
     reply=this.protect(reply);
     // 4. Deterministic output guard: strip banned honorifics, track violations, and block false action claims
     const sanitized = sanitizeForSpeechWithViolations(reply, this.personTitleContext);
@@ -772,8 +738,6 @@ export class MizanVoiceAgent extends Agent<Env> {
     reply = sanitizeForSpeech(bookingSafeText, this.personTitleContext);
     if (!reply) reply = "ممكن توضح لي طلبك أكتر؟";
 
-    if(this.activeConnection){await this.syncOperations(connection);if(this.aiPaused || this.sessionClosed || operationsEpoch!==this.operationsEpoch)return;}
-    await captureKnowledgeGap(this.env,this.tenantSlug,this.sessionId,this.turnCount,this.protect(transcript),this.protect(reply)).catch(()=>{});
     this.conversation.push({ role: "user", content: transcript }, { role: "assistant", content: reply });
 
     voiceTrace.metadata({
@@ -814,8 +778,7 @@ export class MizanVoiceAgent extends Agent<Env> {
 
     try {
       const audio = await voiceTrace.step("synthesize-speech", "span", () => this.synthesizeElevenLabsAudio(reply), {}, (audio) => ({ "langfuse.observation.metadata.audio_bytes": audio.byteLength }));
-      if(this.activeConnection)await this.syncOperations(connection);
-      if (this.sessionClosed || this.aiPaused || operationsEpoch!==this.operationsEpoch) return;
+      if (this.sessionClosed) return;
       connection.send(audio);
       const timeToAudioMs = Date.now() - turnStart;
       this.env.VOICE_METRICS?.writeDataPoint({
@@ -835,18 +798,7 @@ export class MizanVoiceAgent extends Agent<Env> {
       }
     }
 
-    if((this.cmSession.handoff || this.cmSession.emergencyDetected) && !this.sessionClosed){
-      const target=this.cmSession.emergencyDetected?'123':this.escalationPhone;
-      this.hadHumanHandoff=true;this.aiPaused=true;this.handoffHoldRevision=this.operationsRevision;this.operationsEpoch++;
-      this.deepgramSession?.close();this.deepgramSession=null;
-      connection.send(JSON.stringify({type:'handoff',status:'human_required',target,auto_dial:false}));
-      await this.env.DB.batch([
-        this.env.DB.prepare(`INSERT INTO call_operations(session_id,tenant_slug,ai_paused,escalation_target,revision) VALUES(?,?,1,?,1)
-          ON CONFLICT(session_id,tenant_slug) DO UPDATE SET ai_paused=1,escalation_target=excluded.escalation_target,revision=call_operations.revision+1`).bind(this.sessionId,this.tenantSlug,target),
-        this.env.DB.prepare('UPDATE call_sessions SET handed_off=1 WHERE id=? AND tenant_slug=?').bind(this.sessionId,this.tenantSlug)
-      ]);
-      await this.syncOperations(connection);
-    } else if (this.cmSession.state === "ENDED" && !this.sessionClosed) {
+    if (this.cmSession.state === "ENDED" && !this.sessionClosed) {
       try {
         connection.send(
           JSON.stringify({
@@ -859,31 +811,6 @@ export class MizanVoiceAgent extends Agent<Env> {
         // Ignore if client already closed
       }
     }
-  }
-
-  private async syncOperations(connection:Connection) {
-    if(this.sessionClosed || !this.sessionId || !this.tenantSlug)return;
-    const row=await this.env.DB.prepare(`SELECT coalesce(o.ai_paused,0) AS ai_paused,o.escalation_target,coalesce(o.revision,0) AS revision,a.expires_at
-      FROM call_sessions s JOIN voice_admissions a ON a.session_id=s.id AND a.tenant_slug=s.tenant_slug
-      LEFT JOIN call_operations o ON o.session_id=s.id AND o.tenant_slug=s.tenant_slug
-      WHERE s.id=? AND s.tenant_slug=? AND a.state='connected'`).bind(this.sessionId,this.tenantSlug).first<{ai_paused:number;escalation_target:string|null;revision:number;expires_at:number}>();
-    if(this.sessionClosed || this.activeConnection!==connection)return;
-    if(!row || row.expires_at*1000<=Date.now()){
-      this.aiPaused=true;connection.close(1000,'Call lease expired');await this.onClose(connection,1000,'usage_limit',true);return;
-    }
-    if(row.revision!==this.operationsRevision){this.operationsRevision=row.revision;this.operationsEpoch++;}
-    if(this.handoffHoldRevision!==null && !row.ai_paused && row.revision>this.handoffHoldRevision)this.handoffHoldRevision=null;
-    const next=Boolean(row.ai_paused) || this.handoffHoldRevision!==null;
-    if(next)this.hadHumanHandoff=true;
-    if(next===this.aiPaused)return;
-    this.aiPaused=next;
-    if(next){this.deepgramSession?.close();this.deepgramSession=null;}
-    else {
-      this.cmSession.handoff=null;this.cmSession.emergencyDetected=false;this.cmSession.endRequest=null;
-      if(this.cmSession.state==='ENDED')this.cmSession.state='DATA_COLLECTION';
-    }
-    connection.send(JSON.stringify({type:'handoff',status:next?'human_required':'ai_resumed',target:next?row.escalation_target:null,auto_dial:false}));
-    if(!next && (!this.contactPaused || this.contactPending?.phase==='resuming'))this.startStt(connection);
   }
 
   private async synthesizeElevenLabsAudio(text: string): Promise<ArrayBuffer> {
@@ -976,7 +903,6 @@ export class MizanVoiceAgent extends Agent<Env> {
     if (this.sessionClosed) return;
     this.sessionClosed = true;
     this.contactPending=null; this.contactPaused=true;
-    if(this.operationsTimer)clearInterval(this.operationsTimer);this.operationsTimer=null;
     if (this.callTimer) clearTimeout(this.callTimer);
     this.callTimer = null;
     this.activeConnection = null;
@@ -1007,7 +933,7 @@ export class MizanVoiceAgent extends Agent<Env> {
 
     if (this.conversation.some((turn) => turn.role === "assistant")) {
       const confirmedPhone = this.cmSession.slots.phone?.value ?? "";
-      const outcome: ConversationState["outcome"] = (this.hadHumanHandoff || this.cmSession.handoff)
+      const outcome: ConversationState["outcome"] = this.cmSession.handoff
         ? "handoff"
         : this.cmSession.actionResult?.ok || this.cmSession.endRequest
           ? "completed"
@@ -1034,7 +960,7 @@ export class MizanVoiceAgent extends Agent<Env> {
         outcome,
         intentId: this.cmSession.intent,
         intentResolved: Boolean(this.cmSession.actionResult?.ok),
-        handedOff: this.hadHumanHandoff || Boolean(this.cmSession.handoff),
+        handedOff: Boolean(this.cmSession.handoff),
         honorificHits: this.metrics.honorificHits,
         msaHits: this.metrics.msaHits,
         llmErrors: this.metrics.llmErrors
@@ -1045,7 +971,6 @@ export class MizanVoiceAgent extends Agent<Env> {
         let evaluation;
         try {evaluation=JSON.parse(this.protect(JSON.stringify(await evaluateCall(this.env.AI,this.env.PRIMARY_LLM,evalState,evaluationTrace))));}
         finally {await evaluationTrace.finish();}
-        await this.env.DB.prepare(`INSERT INTO call_operations(session_id,tenant_slug,evaluation_json) VALUES(?,?,?) ON CONFLICT(session_id,tenant_slug) DO UPDATE SET evaluation_json=excluded.evaluation_json`).bind(this.sessionId,this.tenantSlug,JSON.stringify(evaluation)).run();
         await persistCallEvaluationAndLearnings(
           this.env.DB,
           this.sessionId,
@@ -1055,7 +980,7 @@ export class MizanVoiceAgent extends Agent<Env> {
         await updateCallSessionOutcome(this.env.DB, this.sessionId, this.tenantSlug, {
           intentId: this.cmSession.intent,
           intentResolved: Boolean(this.cmSession.actionResult?.ok),
-          handedOff: this.hadHumanHandoff || Boolean(this.cmSession.handoff),
+          handedOff: Boolean(this.cmSession.handoff),
           endReason:
             this.cmSession.handoff?.reason ??
             this.cmSession.endRequest?.reason ??

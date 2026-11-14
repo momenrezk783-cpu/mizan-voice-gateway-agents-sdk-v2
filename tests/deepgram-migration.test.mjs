@@ -391,7 +391,7 @@ class MockDeepgramSocket {
   assert.ok(!indexSource.includes("audioNode.connect(audioCtx.destination)"), "Mic-to-speaker loopback must be removed from src/index.ts");
   assert.ok(!agentSource.includes("Half-duplex echo protection"), "Server must not time-gate microphone input during TTS");
   assert.ok(!agentSource.includes("agentSpeakingUntil"), "Estimated TTS duration must not suppress caller audio");
-  assert.ok(!agentSource.includes('command:"barge_in"'), "Unconfirmed speech-start VAD must never cut playback: it can be speaker echo");
+  assert.ok(agentSource.includes('command:"barge_in"'), "Deepgram speech-start events must interrupt current browser playback");
   assert.ok(indexSource.includes("echoCancellation:true"), "Browser microphone capture must request acoustic echo cancellation");
   assert.ok(!indexSource.includes("audioCtx.currentTime<playbackTime+0.25"), "Client must not block microphone frames during playback");
   assert.ok(indexSource.includes("function stopPlayback()"), "Client must stop queued playback when caller barges in");
