@@ -1,11 +1,4 @@
 /** Read-only monthly consumption snapshot. NOT an invoice or payment integration. */
-export async function settleCallUsage(db:D1Database,slug:string,id:string,endedAt=Math.floor(Date.now()/1000)) {
-  await db.prepare(`UPDATE usage_reservations SET used_seconds=CASE
-    WHEN started_at IS NULL OR NOT EXISTS(SELECT 1 FROM call_sessions WHERE id=? AND tenant_slug=?) THEN 0
-    ELSE MIN(reserved_seconds,MAX(0,?-started_at)) END,settled_at=?
-    WHERE session_id=? AND tenant_slug=? AND settled_at IS NULL`)
-    .bind(id,slug,endedAt,endedAt,id,slug).run();
-}
 export function getUtcMonthBounds(input: string): { start: number; end: number; month: string } | null {
   if (!/^20\d{2}-(0[1-9]|1[0-2])$/.test(input)) return null;
   const [year, month] = input.split('-').map(Number);

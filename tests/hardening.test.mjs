@@ -15,7 +15,7 @@ const privacy=await importTs('src/lib/crypto.ts');
 const auth=await importTs('src/lib/auth.ts');
 const {default:worker,MizanVoiceAgent}=await importTs('src/index.ts');
 try {
-  for(const file of ['schema.sql','migration-001.sql','migration-002.sql','migration-003.sql','migration-004.sql','migration-005.sql','migration-006.sql','migration-007.sql']) db.apply(file);
+  for(const file of ['schema.sql','migration-001.sql','migration-002.sql','migration-003.sql','migration-004.sql','migration-005.sql']) db.apply(file);
   db.apply('migration-004.sql'); // new migration is safely repeatable
   await db.prepare(`INSERT INTO tenants(id,slug,name,industry,max_concurrent_sessions) VALUES ('a','tenant-a','Business A','general',3),('b','tenant-b','Business B','general',1)`).run();
   await db.prepare(`INSERT INTO tenant_voice_config(tenant_slug,system_prompt) VALUES ('tenant-a','legacy')`).run();
@@ -38,7 +38,7 @@ p=json.load(sys.stdin);now=int(time.time())
 def reserve(i):
  c=sqlite3.connect(p['file'],timeout=30)
  try:
-  cur=c.execute(p['sql'],(str(uuid.uuid4()),'tenant-a','race-'+str(i),now,now+60,'tenant-a',now,3,'tenant-a',now-3600,'race-'+str(i),now-3600,'tenant-a','tenant-a',now,'tenant-a',time.strftime('%Y-%m',time.gmtime(now)),'tenant-a'));c.commit();return cur.rowcount
+  cur=c.execute(p['sql'],(str(uuid.uuid4()),'tenant-a','race-'+str(i),now,now+60,'tenant-a',now,3,'tenant-a',now-3600,'race-'+str(i),now-3600));c.commit();return cur.rowcount
  finally:c.close()
 with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex: print(sum(ex.map(reserve,range(20))))`;
   assert.equal(Number(execFileSync('python3',['-c',race],{encoding:'utf8',input:JSON.stringify({file:db.file,sql:admissionSql})})),3);
@@ -48,24 +48,6 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex: print(sum(ex.m
     await access.releaseVoiceCall(db,'tenant-a',r.sessionId);
   }
   assert.equal(await access.reserveVoiceCall(db,'tenant-a','limited-ip',3,ticket.origin,secret),null);
-  // Race the exact two-statement admission transaction against a monthly budget.
-  await db.prepare(`INSERT INTO tenant_billing(tenant_slug,monthly_seconds,max_call_seconds) VALUES ('tenant-b',900,300)`).run();
-  const usageSql=db.history.find(sql=>sql.startsWith('INSERT INTO usage_reservations'));
-  const quotaRace=`import sqlite3,json,sys,concurrent.futures,uuid,time
-p=json.load(sys.stdin);now=int(time.time());period=time.strftime('%Y-%m',time.gmtime(now))
-def reserve(i):
- c=sqlite3.connect(p['file'],timeout=30);sid=str(uuid.uuid4());slug='tenant-b'
- try:
-  c.execute('BEGIN IMMEDIATE')
-  cur=c.execute(p['admission'],(sid,slug,'quota-'+str(i),now,now+60,slug,now,20,slug,now-3600,'quota-'+str(i),now-3600,slug,slug,now,slug,period,slug));admitted=cur.rowcount
-  c.execute(p['usage'],(period,slug,slug,sid,slug));c.commit();return admitted
- finally:c.close()
-with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex: print(sum(ex.map(reserve,range(20))))`;
-  assert.equal(Number(execFileSync('python3',['-c',quotaRace],{encoding:'utf8',input:JSON.stringify({file:db.file,admission:admissionSql,usage:usageSql})})),3);
-  assert.equal((await db.prepare(`SELECT SUM(reserved_seconds) n FROM usage_reservations WHERE tenant_slug='tenant-b'`).first()).n,900);
-  await db.prepare(`DELETE FROM usage_reservations WHERE tenant_slug='tenant-b'`).run();
-  await db.prepare(`DELETE FROM voice_admissions WHERE tenant_slug='tenant-b'`).run();
-  await db.prepare(`DELETE FROM tenant_billing WHERE tenant_slug='tenant-b'`).run();
   console.log('PASS ticket signature/expiry/scope/replay, concurrent capacity and IP budgets');
 
   await secure.writeSecureContact(db,'tenant-a','01012345678',{name:'Private Name',email:'private@example.com',lastSummary:'Private summary'},encKey);

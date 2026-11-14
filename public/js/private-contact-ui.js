@@ -24,7 +24,7 @@ window.MizanPrivateContact = {
         }
         if(message.type==='contact_required'){
           stop();clear();id=message.requestId;awaiting=false;setBusy(false);
-          const email=form.elements.email;email.required=Boolean(message.requiredFields?.includes("email"));email.closest('label').hidden=!message.fields?.includes('email');
+          const email=form.elements.email;email.required=false;email.closest('label').hidden=!message.fields?.includes('email');
           dialog.showModal();form.elements.name.focus();return true;
         }
         if(message.type==='contact_result'&&message.requestId===id){
@@ -34,7 +34,7 @@ window.MizanPrivateContact = {
         }
         if(message.type==='contact_resumed'&&message.requestId===id&&awaiting){
           id=null;awaiting=false;paused=false;setBusy(false);clear();
-          const restored=isActive()?resume():false;document.getElementById('privacy-call-status').textContent=restored===false?'الميكروفون ما زال متوقفًا. راجع حالة المكالمة.':'الميكروفون عاد لحالته السابقة. لا تنطق بياناتك الشخصية.';return true;
+          if(isActive())resume();document.getElementById('privacy-call-status').textContent='الميكروفون عاد لحالته السابقة. لا تنطق بياناتك الشخصية.';return true;
         }
         return false;
       },
