@@ -958,7 +958,7 @@ async function handlePublicVoicePage(request: Request, env: Env, slug: string, e
     return new Response("Organization not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   }
 
-  const wsBase = env.VOICE_WS_BASE || "wss://voice.mizanconsult.com";
+  const wsBase = env.VOICE_WS_BASE || new URL(request.url).origin.replace(/^http/, "ws");
   const sessionId = crypto.randomUUID();
   const accent = safeAccent(tenant.theme_color);
   const safeName = escapeHtml(tenant.name);
