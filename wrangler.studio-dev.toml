@@ -1,0 +1,73 @@
+# ============================================================================
+# Mizan Voice Studio (Dev / Staging Pipeline Worker)
+# ============================================================================
+# Isolated dev Worker built from the same voice-gateway source tree via
+# `src/studio-entry.ts`. Never declares production custom domain routes or
+# production resource IDs. Validated by `node scripts/check-staging-config.mjs`.
+#
+# Note on Open Decision #1:
+# If deploying over an older `mizan-voice-studio-dev` script that previously
+# registered `StudioCallSessionDO`, uncomment the v2 migration below ONLY when
+# you want Cloudflare to delete that prototype Durable Object class:
+# [[migrations]]
+# tag = "v2"
+# deleted_classes = ["StudioCallSessionDO"]
+# ============================================================================
+
+name = "mizan-voice-studio-dev"
+main = "src/studio-entry.ts"
+compatibility_date = "2026-11-08"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "staging"
+RUNTIME_VERSION = "v2.2.0-studio-dev"
+MIZAN_VOICE_ID = "2DkHmQavK9V2UzTYrMYT"
+VOICE_WS_BASE = "wss://mizan-voice-studio-dev.momenrezk783.workers.dev"
+OPENCODE_HARNESS_URL = "https://opencode-harness-example.momenrezk783.workers.dev"
+PRIMARY_LLM = "@cf/daily-co/phonellm-mini-alpha-2"
+FALLBACK_LLM = "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mizan-studio-db-dev"
+database_id = "c273fa62-8cf9-4a57-86b6-da90213aa47e"
+
+[[kv_namespaces]]
+binding = "TENANT_CONFIG"
+id = "c42a2668f40c4b4aab11423628cb09f9"
+
+[[durable_objects.bindings]]
+name = "MIZAN_VOICE_AGENT"
+class_name = "MizanVoiceAgent"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MizanVoiceAgent"]
+
+[[queues.producers]]
+binding = "BACKGROUND_QUEUE"
+queue = "mizan-studio-queue-dev"
+
+[[queues.consumers]]
+queue = "mizan-studio-queue-dev"
+max_batch_size = 10
+max_batch_timeout = 5
+
+[[analytics_engine_datasets]]
+binding = "VOICE_METRICS"
+dataset = "mizan_studio_latency_dev"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/", "/studio", "/studio.html", "/about", "/about.html", "/privacy", "/privacy.html", "/terms", "/terms.html", "/c/*", "/api/*", "/agents/*", "/embed/*", "/pcm-processor.js"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1

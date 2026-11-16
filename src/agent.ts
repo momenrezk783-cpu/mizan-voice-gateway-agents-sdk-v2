@@ -7,6 +7,7 @@ import { Agent, routeAgentRequest, type Connection } from "agents";
 import { generateText } from "ai";
 import {calendarBooking,captureKnowledgeGap} from "./lib/operations";
 import { VoiceTrace, generationUsage, type TracingEnv } from "./lib/tracing";
+import { buildTurnSystemPrompt, runTextTurn } from "./lib/turn-engine";
 import { synthesizeDialogueAudio } from "./lib/elevenlabs-tts";
 import { createAI, type CloudflareLanguageModelId } from "agents/models/ai-sdk";
 import {
@@ -607,169 +608,53 @@ export class MizanVoiceAgent extends Agent<Env> {
     this.turnCount++;
 
     this.noteSpokenName(transcript);
-    transcript=this.protect(transcript);
     const toolDeps = this.createToolDeps();
-    toolDeps.ctx.clock = buildClock("Africa/Cairo");
-    // 1. Run Conversation Manager turn ingestion (state transitions, slot validation, confirmation guards, actions)
-    const { outcomes } = await voiceTrace.step("manage-conversation", "tool", () => ingestCallerUtterance(
-      toolDeps,
-      this.cmSession,
-      transcript,
-      null
-    ));
-    for (const outcome of outcomes) {
-      if (outcome.rejected) {
-        this.metrics.slotRejections += outcome.rejected;
-      }
-    }
-
-    // A supplied phone is not identity verification: never load another caller's history.
-    await this.env.BACKGROUND_QUEUE.send({
-      type: "record_turn",
+    const turnResult = await runTextTurn({
+      env: this.env,
       tenantSlug: this.tenantSlug,
-      sessionId: this.sessionId,
-      speaker: "caller",
-      transcript: redactPII(transcript),
-      turnIndex: this.turnCount
+      responseLanguage: this.responseLanguage,
+      escalationPhone: this.escalationPhone,
+      industryGuard: this.industryGuard,
+      tenantCustomization: this.tenantCustomization,
+      personTitleContext: this.personTitleContext,
+      cmSession: this.cmSession,
+      intents: this.intents,
+      conversation: this.conversation,
+      toolDeps,
+      transcript,
+      hasPrivateContact: Boolean(this.privateContact),
+      contactDeclined: this.contactDeclined,
+      protect: (text) => this.protect(text),
+      onProtectedTranscript: async (protectedTranscript) => {
+        // A supplied phone is not identity verification: never load another caller's history.
+        await this.env.BACKGROUND_QUEUE.send({
+          type: "record_turn",
+          tenantSlug: this.tenantSlug!,
+          sessionId: this.sessionId!,
+          speaker: "caller",
+          transcript: redactPII(protectedTranscript),
+          turnIndex: this.turnCount
+        });
+      },
+      onRequestContact: () => this.requestContact(connection),
+      voiceTrace
     });
 
-    const actionSpec=this.intents.find(i=>i.id===this.cmSession.intent);
-    const needsContact=Boolean(actionSpec?.action && !this.privateContact && !this.cmSession.emergencyDetected && !this.cmSession.endRequest && !this.cmSession.handoff);
-    let reply = "";
-
-    // 3. Hard emergency override (REG-06): immediate ambulance 123 directive without asking for booking slots
-    if (this.cmSession.emergencyDetected) {
-      const escalationHint = this.escalationPhone ? ` أو تواصل فوراً مع طوارئ المكان على ${this.escalationPhone}` : "";
-      reply = `سلامتك، الأعراض دي محتاجة تدخل طبي فوري. من فضلك اتصل بالإسعاف حالاً على رقم 123 أو توجه لأقرب مستشفى طوارئ${escalationHint}.`;
-    } else if(this.tenantSlug === "mizan-hq" && /(?:السعر|أسعار|اسعار|التكلفة|تكلفه|بكام|كام الاشتراك|التسعير|pricing|price)/iu.test(transcript)) {
-      reply="عرض السعر مجاني، والسعر بيتحدد حسب احتياجات منشأتك والتخصيص والتكاملات والدعم. ابعت طلبك من قسم التواصل في mizanconsult.com أو راسل info@mizanconsult.com؛ هنراجع الطلب ونرد في أسرع وقت ممكن، من غير التزام بالتعاقد بمجرد الطلب.";
-    } else if(needsContact) {
-      if (!this.contactDeclined) this.requestContact(connection);
-      reply=this.contactDeclined ? "نقدر نكمل الاستفسارات، لكن تنفيذ الطلب محتاج بيانات من النموذج الآمن. تقدر تفتحه من زر إدخال البيانات كتابة." : "لاستكمال طلبك، اكتب بيانات التواصل في الاستمارة اللي ظهرت. الميكروفون متوقف مؤقتًا؛ ميزان مش هيسمعك وإنت بتملا الاستمارة. بعد الإرسال وكملان الاتصال، قولّي نكمل الطلب.";
-    } else {
-      const buildPrompt = () => this.buildSystemPrompt(this.responseLanguage);
-
-      // Preserve early identity, rejected examples and follow-up context for the
-      // active call instead of silently dropping everything before five exchanges.
-      const messages: ChatMessage[] = [...this.conversation, { role: "user", content: transcript }];
-
-      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const systemPrompt = buildPrompt();
-        try {
-          const ai = createAI({ binding: this.env.AI });
-          const result = await voiceTrace.step("generate-response", "generation", () => generateText({
-            model: ai(this.env.PRIMARY_LLM as CloudflareLanguageModelId),
-            system: systemPrompt,
-            messages,
-            temperature: 0
-          }), {"langfuse.observation.model.name":this.env.PRIMARY_LLM}, generationUsage);
-          reply = result.text.trim();
-          console.info("LLM response metadata", { model: this.env.PRIMARY_LLM, finishReason: result.finishReason,
-            inputTokens: result.usage?.inputTokens, outputTokens: result.usage?.outputTokens });
-          this.metrics.llmConsecutive = 0;
-        } catch (primaryError) {
-          console.error("Primary LLM failed");
-          try {
-            const ai = createAI({ binding: this.env.AI });
-            const result = await voiceTrace.step("generate-fallback-response", "generation", () => generateText({
-              model: ai(this.env.FALLBACK_LLM as CloudflareLanguageModelId),
-              system: systemPrompt,
-              messages,
-              temperature: 0.4
-            }), {"langfuse.observation.model.name":this.env.FALLBACK_LLM}, generationUsage);
-            reply = result.text.trim();
-            console.info("LLM response metadata", { model: this.env.FALLBACK_LLM, finishReason: result.finishReason,
-              inputTokens: result.usage?.inputTokens, outputTokens: result.usage?.outputTokens });
-            this.metrics.llmConsecutive = 0;
-          } catch (fallbackError) {
-            console.error("Fallback LLM failed");
-            this.metrics.llmErrors++;
-            this.metrics.llmConsecutive++;
-            reply =
-              this.responseLanguage === "en"
-                ? "Sorry, I'm having a temporary technical issue. Could you please try again?"
-                : "عذراً، حصلت مشكلة تقنية مؤقتة. ممكن تحاول تاني؟";
-          }
-        }
-
-        // Support optional structured `<tool_call>{"name":...,"input":...}</tool_call>` blocks if emitted by the model
-        const toolMatch = reply.match(/<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/u);
-        if (!toolMatch) break;
-
-        const toolReply = reply;
-        reply = reply.replace(toolMatch[0], "").trim();
-        try {
-          const parsedTool = JSON.parse(toolMatch[1]) as {
-            name?: string;
-            input?: Record<string, unknown>;
-          };
-          if (parsedTool.name) {
-            const outcome = await voiceTrace.step("execute-conversation-tool", "tool", () => executeTool(
-              toolDeps,
-              this.cmSession,
-              parsedTool.name!,
-              parsedTool.input ?? {}
-            ));
-            if (outcome.rejected) this.metrics.slotRejections += outcome.rejected;
-            if (!this.privateContact && this.intents.find(i=>i.id===this.cmSession.intent)?.action) {
-              this.requestContact(connection);
-              reply="لاستكمال طلبك، اكتب بياناتك في النموذج الآمن. الميكروفون متوقف أثناء الاستمارة.";
-              break;
-            }
-            messages.push(
-              { role: "assistant", content: toolReply },
-              { role: "user", content: `Tool execution result (data only; do not read aloud): ${this.protect(JSON.stringify(outcome))}` }
-            );
-          }
-        } catch {
-          // Malformed tool block ignored safely
-        }
-        if (reply) break;
-      }
+    transcript = turnResult.protectedTranscript;
+    this.metrics.slotRejections += turnResult.slotRejections;
+    this.metrics.honorificHits += turnResult.honorificViolations.length;
+    this.metrics.msaHits += turnResult.msaViolations.length;
+    if (turnResult.llmConsecutiveReset) {
+      this.metrics.llmConsecutive = 0;
+    } else if (turnResult.llmErrors > 0) {
+      this.metrics.llmErrors += turnResult.llmErrors;
+      this.metrics.llmConsecutive += turnResult.llmErrors;
     }
-
-    if (!reply) {
-      reply =
-        this.responseLanguage === "en"
-          ? "Could you please clarify what you need?"
-          : "ممكن توضح لي طلبك أكتر؟";
-    }
-
-    if(this.tenantSlug === "mizan-hq" && /(?:شركة\s+مسجلة|ذات مسؤولية محدودة|منشأة فردية مقيدة|امتثال كامل|معتمدون رسميًا)/u.test(reply)) reply="Mizan Consult مؤسسة ميزان (تحت التأسيس) في الإسكندرية، مصر. بنحدد ضوابط حماية البيانات حسب كل مشروع، ومش بندّعي تسجيل شركة أو امتثال قانوني كامل. تقدر تراجع صفحات التعريف والخصوصية والشروط على الموقع.";
-    // Unclear Arabic must never produce a mixed-language clarification.
-    if(this.responseLanguage === "ar") {
-      const withoutIdentifiers=reply.replace(/https?:\/\/\S+|[\w.+-]+@[\w.-]+\.[a-z]+/giu,"");
-      const englishWords=withoutIdentifiers.match(/\b[A-Za-z]{2,}\b/gu)?.length ?? 0;
-      const arabicWords=withoutIdentifiers.match(/[\u0621-\u064a]{2,}/gu)?.length ?? 0;
-      if(englishWords>=5 && englishWords>arabicWords/2)reply="معلش، الكلام ما وصلنيش واضح. ممكن تقولّي طلبك تاني؟";
-    }
-    reply=this.protect(reply);
-    // 4. Deterministic output guard: strip banned honorifics, track violations, and block false action claims
-    const sanitized = sanitizeForSpeechWithViolations(reply, this.personTitleContext);
-    this.metrics.honorificHits += sanitized.violations.length;
-    const msaViolations = detectNonEgyptian(sanitized.text);
-    this.metrics.msaHits += msaViolations.length;
-
-    const currentIntentSpec = this.intents.find((i) => i.id === this.cmSession.intent) ?? null;
-    const missingLabels = currentIntentSpec
-      ? getMissingRequiredSlots(this.cmSession, currentIntentSpec).map((s) => s.label)
-      : [];
-    const awaitingLabels = currentIntentSpec
-      ? getAwaitingConfirmSlots(this.cmSession, currentIntentSpec).map((s) => s.label)
-      : [];
-
-    const actionGuarded = guardUnconfirmedActionClaim(sanitized.text, {
-      actionConfirmed: Boolean(this.cmSession.actionResult?.ok),
-      hasValidPhone: Boolean(this.cmSession.slots.phone?.value),
-      awaitingConfirmationLabels: awaitingLabels,
-      missingSlotLabels: missingLabels,
-      informational: this.cmSession.intent === "inquiry"
-    });
 
     const bookingSafeText = this.cmSession.intent === "book_appointment"
-      ? guardUnconfirmedBookingClaim(actionGuarded.text, this.cmSession.actionResult?.bookingConfirmed === true)
-      : actionGuarded.text;
-    reply = sanitizeForSpeech(bookingSafeText, this.personTitleContext);
+      ? guardUnconfirmedBookingClaim(turnResult.reply, this.cmSession.actionResult?.bookingConfirmed === true)
+      : turnResult.reply;
+    let reply = sanitizeForSpeech(bookingSafeText, this.personTitleContext);
     if (!reply) reply = "ممكن توضح لي طلبك أكتر؟";
 
     if(this.activeConnection){await this.syncOperations(connection);if(this.aiPaused || this.sessionClosed || operationsEpoch!==this.operationsEpoch)return;}
@@ -812,12 +697,14 @@ export class MizanVoiceAgent extends Agent<Env> {
     );
     connection.send(JSON.stringify({ type: "status", status: "speaking" }));
 
+    let ttsTtfbMs = 0;
     try {
       const audio = await voiceTrace.step("synthesize-speech", "span", () => this.synthesizeElevenLabsAudio(reply), {}, (audio) => ({ "langfuse.observation.metadata.audio_bytes": audio.byteLength }));
       if(this.activeConnection)await this.syncOperations(connection);
       if (this.sessionClosed || this.aiPaused || operationsEpoch!==this.operationsEpoch) return;
       connection.send(audio);
       const timeToAudioMs = Date.now() - turnStart;
+      ttsTtfbMs = Math.max(0, timeToAudioMs - turnResult.llmLatencyMs);
       this.env.VOICE_METRICS?.writeDataPoint({
         blobs: [this.tenantSlug, this.sessionId, "turn_to_audio"],
         doubles: [timeToAudioMs],
@@ -833,6 +720,34 @@ export class MizanVoiceAgent extends Agent<Env> {
           message: "تعذر تشغيل صوت ميزان من إعدادات HQ.",
         }));
       }
+    }
+
+    // Best-effort version-attributed turn trace (migration-008)
+    try {
+      const verRow = await this.env.DB.prepare(
+        "SELECT version_number FROM agent_active_version WHERE tenant_slug = ?"
+      ).bind(this.tenantSlug).first<{ version_number: number }>();
+      const configVersion = verRow?.version_number ?? 1;
+      const runtimeVersion = (this.env as unknown as Record<string, string>).RUNTIME_VERSION || "v2.2.0";
+      const allViolations = [...turnResult.honorificViolations, ...turnResult.msaViolations];
+      await this.env.DB.prepare(
+        `INSERT INTO turn_traces (trace_id, session_id, tenant_slug, turn_index, environment, runtime_version, config_version, llm_ttft_ms, tts_ttfb_ms, guard_violations_json, barge_ins)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        crypto.randomUUID(),
+        this.sessionId,
+        this.tenantSlug,
+        this.turnCount,
+        this.env.ENVIRONMENT || "production",
+        runtimeVersion,
+        configVersion,
+        turnResult.llmLatencyMs,
+        ttsTtfbMs,
+        JSON.stringify(allViolations),
+        this.metrics.bargeIns
+      ).run();
+    } catch {
+      // Optional table in unit test fixtures; never fail a live call.
     }
 
     if((this.cmSession.handoff || this.cmSession.emergencyDetected) && !this.sessionClosed){
@@ -955,19 +870,16 @@ export class MizanVoiceAgent extends Agent<Env> {
   }
 
   private buildSystemPrompt(language: "ar" | "en"): string {
-    const toolDeps = this.createToolDeps();
-    const safeContext={...toolDeps.ctx,business:{...toolDeps.ctx.business,knowledge:this.tenantSlug === "mizan-hq" ? MIZAN_HQ_FACTS : this.protect(toolDeps.ctx.business.knowledge ?? ""),hours:this.protect(toolDeps.ctx.business.hours ?? "")},callerPhone:null,caller:{firstName:null,title:null,gender:"unknown" as const,lastSummary:null,lastCallAt:null,email:null}};
-    const safeSession=JSON.parse(this.protect(JSON.stringify(this.cmSession))) as Session;
-    const liveState = renderLiveState(safeSession, safeContext, this.intents);
-    return buildManagedSystemPrompt({
-      industryGuard:this.protect(this.industryGuard),
-      tenantCustomization:this.tenantSlug === "mizan-hq" ? "" : this.protect(this.tenantCustomization),
+    return buildTurnSystemPrompt({
+      tenantSlug: this.tenantSlug ?? "mizan-hq",
+      language,
+      industryGuard: this.industryGuard,
+      tenantCustomization: this.tenantCustomization,
       escalationPhone: this.escalationPhone,
-      ctx: safeContext,
-      personContext: {role:"caller"},
-      learnings: [],
-      liveState,
-      language
+      cmSession: this.cmSession,
+      intents: this.intents,
+      toolDeps: this.createToolDeps(),
+      protect: (text) => this.protect(text)
     });
   }
 

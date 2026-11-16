@@ -7,12 +7,12 @@ import {pathToFileURL} from 'node:url';
 export function validateStagingConfig(candidate, production) {
   const problems=[];
   const get = (text,key) => text.match(new RegExp('^\\s*'+key+'\\s*=\\s*"([^"]*)"','m'))?.[1] || '';
-  if (!/^mizan-[\w-]*staging$/.test(get(candidate,'name')) || get(candidate,'name') === get(production,'name')) problems.push('Worker must have a distinct -staging name');
+  if (!/^mizan-[\w-]*(?:staging|dev)$/.test(get(candidate,'name')) || get(candidate,'name') === get(production,'name')) problems.push('Worker must have a distinct -staging or -dev name');
   if (!/ENVIRONMENT\s*=\s*"staging"/.test(candidate)) problems.push('ENVIRONMENT must be staging');
   if (/REPLACE_WITH|mizanconsult\.com|\[\[?routes?\]?\]/i.test(candidate)) problems.push('Placeholder or production domain/route found');
   if (!/workers_dev\s*=\s*true/.test(candidate)) problems.push('Staging workers_dev must be true');
-  if (!/database_name\s*=\s*"[\w-]*staging"/.test(candidate)) problems.push('Staging D1 database name required');
-  if (!/queue\s*=\s*"[\w-]*staging"/.test(candidate) || [...candidate.matchAll(/\bqueue\s*=\s*"([^"]+)"/g)].some(m=>!m[1].endsWith("-staging"))) problems.push('Every queue must be a staging queue');
+  if (!/database_name\s*=\s*"[\w-]*(?:staging|dev)"/.test(candidate)) problems.push('Staging D1 database name required');
+  if (!/queue\s*=\s*"[\w-]*(?:staging|dev)"/.test(candidate) || [...candidate.matchAll(/\bqueue\s*=\s*"([^"]+)"/g)].some(m=>!/-(?:staging|dev)$/.test(m[1]))) problems.push('Every queue must be a staging/dev queue');
   for (const key of ['database_id','id']) {
     const ours = key==='id' ? candidate.match(/\[\[kv_namespaces\]\][\s\S]*?\bid\s*=\s*"([^"]*)"/)?.[1] : get(candidate,key);
     const live = key==='id' ? production.match(/\[\[kv_namespaces\]\][\s\S]*?\bid\s*=\s*"([^"]*)"/)?.[1] : get(production,key);

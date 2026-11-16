@@ -32,6 +32,7 @@ export { MizanVoiceAgent };
 import { UUID, privateVoiceKey, reserveVoiceCall, verifyCallTicket, claimVoiceCall, releaseVoiceCall } from "./lib/voice-access";
 import { InputError, readJsonBody, validateFields, text, integer, oneOf, domain, logo } from "./lib/request-validation";
 import { migrateLegacyCrmContacts } from "./lib/secure-crm";
+import { verifyAndImportReleaseBundle } from "./lib/release-bundle";
 
 interface Env {
   DB: D1Database;
@@ -42,6 +43,7 @@ interface Env {
   BACKGROUND_QUEUE: Queue<BackgroundMessage>;
   ASSETS: Fetcher;
   SESSION_SECRET: string;
+  PROMOTION_SIGNING_KEY?: string;
   CONTACT_ENC_KEY: string;
   ADMIN_PASSKEY_HASH: string;
   DEEPGRAM_API_KEY?: string;
@@ -836,6 +838,19 @@ async function adminApi(request: Request, env: Env, url: URL): Promise<Response>
     if (change.meta.changes < 1) return json({error:"Industry guard not found"},404);
     await env.TENANT_CONFIG.delete(`industry_guard:${industry}`);
     return json({ ok: true });
+  }
+
+  // POST /api/admin/releases/import — super_admin pull-based import of HMAC-signed Studio config bundle
+  if (path === "/api/admin/releases/import" && request.method === "POST") {
+    const body = await request.json<{ bundle?: unknown; dryRun?: unknown }>();
+    const result = await verifyAndImportReleaseBundle(env, body?.bundle ?? body, {
+      dryRun: Boolean(body?.dryRun),
+      actor: user.email || user.id
+    });
+    if (!result.ok) {
+      return json({ error: result.error }, result.status);
+    }
+    return json(result);
   }
 
   return json({ error: "Not found" }, 404);

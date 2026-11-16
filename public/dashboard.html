@@ -175,6 +175,19 @@
             <div id="guards-list"></div>
           </div>
         </div>
+        <div class="card" style="margin-top:16px">
+          <h3>ترقية إصدار موقّع من استوديو التطوير (Import Studio Release)</h3>
+          <p class="sub" style="margin-bottom:12px">الصق حزمة الإصدار الموقّعة بـ HMAC-SHA256 من <code>mizan-voice-studio-dev</code> لمعاينة الفروقات (Dry-Run) ثم اعتمادها للمنشأة دون المساس بسجلات المكالمات أو جهات الاتصال.</p>
+          <div class="fld">
+            <label class="l" for="release-bundle-input">حزمة الإصدار الموقّعة (Signed JSON Bundle)</label>
+            <textarea id="release-bundle-input" rows="4" class="ltr" placeholder='{"payload":{"schemaVersion":1,"tenantSlug":"..."},"signature":"..."}'></textarea>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn g" type="button" onclick="importStudioRelease(true)">معاينة الفروقات (Dry-Run Diff)</button>
+            <button class="btn" type="button" onclick="importStudioRelease(false)">اعتماد وترقية الإصدار للإنتاج</button>
+          </div>
+          <pre id="release-import-diff" class="sub ltr" style="margin-top:12px;white-space:pre-wrap"></pre>
+        </div>
       </div>
 
       <!-- 5. Internal text search over tenant names and calls -->
@@ -362,6 +375,37 @@ async function runAdminSearch() {
   } catch { MizanSearch.render('admin-search-results', [], 'تعذر تنفيذ البحث. تحقق من الاتصال والصلاحيات.'); }
 }
 
+
+async function importStudioRelease(dryRun) {
+  const raw = document.getElementById('release-bundle-input').value.trim();
+  const out = document.getElementById('release-import-diff');
+  if (!raw) { showToast('الصق حزمة الإصدار الموقّعة أولاً.'); return; }
+  let bundle;
+  try { bundle = JSON.parse(raw); } catch { showToast('صيغة JSON غير صالحة.'); return; }
+  try {
+    const res = await fetch('/api/admin/releases/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ bundle, dryRun: Boolean(dryRun) })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      out.textContent = data.error || 'تعذر استيراد الحزمة.';
+      showToast(data.error || 'رفض التحقق من الحزمة.');
+      return;
+    }
+    out.textContent = JSON.stringify({
+      mode: data.dryRun ? 'dry-run' : 'promoted',
+      tenantSlug: data.tenantSlug,
+      activatedVersion: data.activatedVersion,
+      changes: data.diff?.changes || []
+    }, null, 2);
+    showToast(data.dryRun ? 'تمت معاينة الفروقات بنجاح' : ('تمت ترقية ' + data.tenantSlug + ' إلى v' + data.activatedVersion));
+  } catch {
+    showToast('تعذر الاتصال بالخادم لاستيراد الإصدار.');
+  }
+}
 
 loadOverview();
 </script>
