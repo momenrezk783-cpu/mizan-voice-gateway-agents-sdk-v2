@@ -5,11 +5,10 @@ import path from "node:path";
 import { SqliteD1, importTs } from "./helpers/runtime.mjs";
 
 const { createSessionResponse } = await importTs("src/lib/auth.ts");
-const studioWorker = (await importTs("src/studio-entry.ts")).default;
+const { computeConfigBundleHash, signReleaseBundle } = await importTs("src/lib/release-bundle.ts");
 const prodGateway = (await importTs("src/index.ts")).default;
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mizan-release-import-"));
-const devDb = new SqliteD1(path.join(tmpDir, "dev.sqlite"));
 const prodDb = new SqliteD1(path.join(tmpDir, "prod.sqlite"));
 
 try {
@@ -25,10 +24,8 @@ try {
     "migration-008.sql"
   ];
   for (const m of migrations) {
-    devDb.apply(m);
     prodDb.apply(m);
   }
-  devDb.apply("scripts/seed-studio-dev.sql");
 
   // Seed existing tenant + call history in Production D1 to verify import never touches calls/contacts/billing
   await prodDb.batch([
@@ -53,15 +50,6 @@ try {
   ]);
 
   const sharedSigningKey = "shared-hmac-signing-key-between-dev-and-prod-32b";
-  const devEnv = {
-    ENVIRONMENT: "staging",
-    RUNTIME_VERSION: "v2.2.0-dev",
-    SESSION_SECRET: "dev-session-secret-minimum-32-characters",
-    PROMOTION_SIGNING_KEY: sharedSigningKey,
-    STUDIO_API_TOKEN: "dev-studio-api-token-for-export-test",
-    DB: devDb,
-    TENANT_CONFIG: { get: async () => null, put: async () => {}, delete: async () => {} }
-  };
 
   const prodDeletedKv = [];
   const prodEnv = {
@@ -84,35 +72,32 @@ try {
   };
   const ctx = { waitUntil() {} };
 
-  // 1. Publish v2 in Dev and export signed bundle
-  await studioWorker.fetch(
-    new Request("https://studio.example.workers.dev/api/ops/agents/publish", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${devEnv.STUDIO_API_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        tenantId: "alex-pilot-01",
-        industry: "healthcare",
-        voiceId: "2DkHmQavK9V2UzTYrMYT",
-        tenantCustomization: "نسخة مختبرة في الاستوديو جاهزة للإنتاج.",
-        knowledgeText: "مواعيد العيادة الجديدة من 11 صباحاً حتى 9 مساءً."
-      })
-    }),
-    devEnv,
-    ctx
+  // 1. Sign a v2 release bundle (as exported by the Independent Mizan Development Factory)
+  const knowledge = [{ category: "general", faq_text: "مواعيد العيادة الجديدة من 11 صباحاً حتى 9 مساءً." }];
+  const bundleHash = await computeConfigBundleHash({
+    tenantSlug: "alex-pilot-01",
+    industry: "healthcare",
+    voiceId: "2DkHmQavK9V2UzTYrMYT",
+    tenantCustomization: "نسخة مختبرة في الاستوديو جاهزة للإنتاج.",
+    knowledge
+  });
+  const bundle = await signReleaseBundle(
+    {
+      schemaVersion: 1,
+      tenantSlug: "alex-pilot-01",
+      tenantName: "عيادة الإسكندرية",
+      industry: "healthcare",
+      voiceId: "2DkHmQavK9V2UzTYrMYT",
+      tenantCustomization: "نسخة مختبرة في الاستوديو جاهزة للإنتاج.",
+      knowledge,
+      sourceVersion: 2,
+      sourceEnvironment: "mizan-factory-dev",
+      sourceSha: "v4.0.0-factory",
+      bundleHash,
+      exportedAt: Date.now()
+    },
+    sharedSigningKey
   );
-
-  const exportRes = await studioWorker.fetch(
-    new Request("https://studio.example.workers.dev/api/ops/agents/export?tenantId=alex-pilot-01&version=2", {
-      headers: { Authorization: `Bearer ${devEnv.STUDIO_API_TOKEN}` }
-    }),
-    devEnv,
-    ctx
-  );
-  assert.equal(exportRes.status, 200);
-  const { bundle } = await exportRes.json();
   assert.equal(bundle.payload.sourceVersion, 2);
   assert.equal(bundle.payload.tenantSlug, "alex-pilot-01");
 
