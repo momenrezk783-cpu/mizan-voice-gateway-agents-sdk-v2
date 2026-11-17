@@ -5,7 +5,21 @@ on:
     branches:
       - main
       - "feat/**"
+    # Documentation-only changes must never reach production. Any change to
+    # src/, wrangler.toml, schema.sql or migrations still deploys on main.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".dev.vars.example"
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".dev.vars.example"
   workflow_dispatch:
 
 permissions:
