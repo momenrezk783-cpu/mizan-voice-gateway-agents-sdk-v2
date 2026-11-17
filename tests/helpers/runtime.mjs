@@ -15,9 +15,14 @@ export function loadUrl(file) {
   const code = ts.transpileModule(fs.readFileSync(abs,'utf8'),{fileName:abs,compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText
     .replace(/(from\s+["'])([^"']+)(["'])/gu,(_,prefix,spec,suffix)=>prefix+(externals[spec]??(spec.startsWith('.')?loadUrl(path.resolve(path.dirname(abs),spec+'.ts')):import.meta.resolve(spec)))+suffix);
   const url=asUrl(code);cache.set(abs,url);return url;
+function loadTs(dir, spec) {
+  const base = path.resolve(dir, spec);
+  if (fs.existsSync(base + '.ts')) return loadUrl(base + '.ts');
+  if (fs.existsSync(base + '.mjs')) return loadUrl(base + '.mjs');
+  const indexFile = path.join(base, 'index.ts');
+  if (fs.existsSync(indexFile)) return loadUrl(indexFile);
+  return loadUrl(base + '.ts');
 }
-export const importTs = file => import(loadUrl(file));
-export function mockDialogueResponse(url,onInput=()=>{}) {
   const listeners=new Map();let settings;
   const socket={addEventListener:(name,fn)=>listeners.set(name,fn),accept(){},close(){},send(raw){
     const value=JSON.parse(raw);
