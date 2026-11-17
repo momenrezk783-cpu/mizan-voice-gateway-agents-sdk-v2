@@ -7,7 +7,7 @@ import { Agent, routeAgentRequest, type Connection } from "agents";
 import { generateText } from "ai";
 import {calendarBooking,captureKnowledgeGap} from "./lib/operations";
 import { VoiceTrace, generationUsage, type TracingEnv } from "./lib/tracing";
-import { synthesizeDialogueAudio } from "./lib/elevenlabs-tts";
+import { synthesizeSpeech } from "./lib/tts";
 import { createAI, type CloudflareLanguageModelId } from "agents/models/ai-sdk";
 import {
   resolveTenant,
@@ -86,6 +86,10 @@ export interface Env extends TracingEnv {
   DEEPGRAM_LANGUAGE?: string;
   ELEVENLABS_TTS_KEY?: string;
   ELEVENLABS_API_KEY?: string;
+  GOOGLE_TTS_API_KEY?: string;
+  GOOGLE_TTS_VOICE?: string;
+  TTS_PROVIDER?: string;
+  TTS_FALLBACK_PROVIDER?: string;
   MIZAN_VOICE_ID?: string;
   ENVIRONMENT: string;
 }
@@ -813,17 +817,17 @@ export class MizanVoiceAgent extends Agent<Env> {
     connection.send(JSON.stringify({ type: "status", status: "speaking" }));
 
     try {
-      const audio = await voiceTrace.step("synthesize-speech", "span", () => this.synthesizeElevenLabsAudio(reply), {}, (audio) => ({ "langfuse.observation.metadata.audio_bytes": audio.byteLength }));
+      const speech = await voiceTrace.step("synthesize-speech", "span", () => this.synthesizeAgentSpeech(reply), {}, (result) => ({ "langfuse.observation.metadata.audio_bytes": result.audio.byteLength, "langfuse.observation.metadata.tts_provider": result.provider }));
       if(this.activeConnection)await this.syncOperations(connection);
       if (this.sessionClosed || this.aiPaused || operationsEpoch!==this.operationsEpoch) return;
-      connection.send(audio);
+      connection.send(speech.audio);
       const timeToAudioMs = Date.now() - turnStart;
       this.env.VOICE_METRICS?.writeDataPoint({
         blobs: [this.tenantSlug, this.sessionId, "turn_to_audio"],
         doubles: [timeToAudioMs],
         indexes: [this.tenantSlug]
       });
-      connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: audio.byteLength, timeToAudioMs }));
+      connection.send(JSON.stringify({ type: "status", status: "audio_sent", bytes: speech.audio.byteLength, timeToAudioMs, ttsProvider: speech.provider }));
     } catch (ttsError) {
       console.error("ElevenLabs TTS failed");
       if (!this.sessionClosed) {
@@ -886,72 +890,28 @@ export class MizanVoiceAgent extends Agent<Env> {
     if(!next && (!this.contactPaused || this.contactPending?.phase==='resuming'))this.startStt(connection);
   }
 
-  private async synthesizeElevenLabsAudio(text: string): Promise<ArrayBuffer> {
-    const apiKey = (this.env.ELEVENLABS_TTS_KEY || this.env.ELEVENLABS_API_KEY || "").trim();
-    if (!apiKey) throw new Error("ELEVENLABS_TTS_KEY secret is not configured");
+  private async synthesizeAgentSpeech(text: string) {
     const config = this.elevenLabsConfig;
-    if (!config?.voice_id) throw new Error("HQ ElevenLabs voice config is unavailable");
-    if(config.model_id === "eleven_v4_turbo")return synthesizeDialogueAudio(text,apiKey,config,this.responseLanguage);
-
-    const endpoint = new URL("https://api.elevenlabs.io/v1/text-to-speech/" + encodeURIComponent(config.voice_id));
-    endpoint.searchParams.set("output_format", "mp3_44100_128");
-    let lastError = "ElevenLabs request failed";
-
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-      let response: Response;
-      try {
-        response = await fetch(endpoint.toString(), {
-          method: "POST",
-          headers: {
-            "xi-api-key": apiKey,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            text,
-            model_id: config.model_id,
-            language_code: this.responseLanguage === "en" ? "en" : "ar",
-            voice_settings: {
-              stability: config.stability,
-              similarity_boost: config.similarity_boost,
-              speed: config.speed,
-              use_speaker_boost: true
-            }
-          }),
-          signal: controller.signal
-        });
-      } catch (error) {
-        lastError = "network request failed";
-        if (attempt === 3) throw new Error("ElevenLabs network/timeout error: " + lastError);
-        await new Promise((resolve) => setTimeout(resolve, attempt * 300));
-        continue;
-      } finally {
-        clearTimeout(timeout);
-      }
-
-      if (response.ok) {
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType && !contentType.startsWith("audio/") && !contentType.includes("octet-stream")) {
-          throw new Error("ElevenLabs returned unexpected content type: " + contentType);
-        }
-        const audio = await response.arrayBuffer();
-        if (audio.byteLength < 100) throw new Error("ElevenLabs returned empty or incomplete MP3 audio");
-        return audio;
-      }
-
-      await response.body?.cancel();
-      lastError = "ElevenLabs HTTP " + response.status;
-      const retryable = response.status === 429 || response.status === 500 ||
-        response.status === 502 || response.status === 503 || response.status === 504;
-      if (!retryable || attempt === 3) throw new Error(lastError);
-      const retryAfter = Number(response.headers.get("retry-after") || 0);
-      const delayMs = retryAfter > 0
-        ? Math.min(3000, Math.max(250, retryAfter * 1000))
-        : attempt * 400;
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-    throw new Error(lastError);
+    if (!config?.voice_id) throw new Error("HQ voice config is unavailable");
+    const result = await synthesizeSpeech(
+      {
+        ELEVENLABS_TTS_KEY: this.env.ELEVENLABS_TTS_KEY,
+        ELEVENLABS_API_KEY: this.env.ELEVENLABS_API_KEY,
+        GOOGLE_TTS_API_KEY: this.env.GOOGLE_TTS_API_KEY,
+        GOOGLE_TTS_VOICE: this.env.GOOGLE_TTS_VOICE,
+        TTS_PROVIDER: this.env.TTS_PROVIDER,
+        TTS_FALLBACK_PROVIDER: this.env.TTS_FALLBACK_PROVIDER
+      },
+      { text, language: this.responseLanguage, voice: config }
+    );
+    // Which provider actually spoke, and what the others said. Safe to log.
+    console.info("TTS provider result", {
+      provider: result.provider,
+      mimeType: result.mimeType,
+      bytes: result.audio.byteLength,
+      attempts: result.attempts
+    });
+    return result;
   }
 
   private buildSystemPrompt(language: "ar" | "en"): string {
