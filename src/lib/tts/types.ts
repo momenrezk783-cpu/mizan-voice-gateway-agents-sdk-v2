@@ -5,7 +5,7 @@
 // directly. Adding a third provider means adding one file here, not editing
 // agent.ts.
 
-export type TtsProviderId = "elevenlabs" | "google";
+export type TtsProviderId = "elevenlabs" | "google" | "library";
 
 /** The voice settings a provider needs. ElevenLabs fields are ignored by Google. */
 export interface TtsVoiceConfig {

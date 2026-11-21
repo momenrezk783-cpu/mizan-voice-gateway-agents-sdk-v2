@@ -8,6 +8,7 @@
 // ============================================================================
 
 import {MIZAN_HQ_FACTS} from "../mizan-profile";
+import { STOCK_VOICE_LINES_BLOCK } from "../clips/registry";
 import type { CallContext, CallState, CallerType } from "./manager";
 import { resolvePersonAddressPolicy, type PersonTitleContext } from "./guard";
 
@@ -172,7 +173,9 @@ const INDUSTRY_SAFETY: Record<string, string> = {
 
 function codeIdentity(ctx: CallContext): string {
   return ctx.tenantId === "mizan-hq"
-    ? `<business_identity>${MIZAN_HQ_FACTS}</business_identity>`
+    ? `<business_identity>${MIZAN_HQ_FACTS}</business_identity>
+
+${STOCK_VOICE_LINES_BLOCK}`
     : "";
 }
 

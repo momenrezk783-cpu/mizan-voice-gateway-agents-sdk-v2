@@ -7,7 +7,8 @@ import { Agent, routeAgentRequest, type Connection } from "agents";
 import { generateText } from "ai";
 import {calendarBooking,captureKnowledgeGap} from "./lib/operations";
 import { VoiceTrace, generationUsage, type TracingEnv } from "./lib/tracing";
-import { synthesizeSpeech } from "./lib/tts";
+import { synthesizeSpeech } from "./lib/tts/index";
+import { libraryClipForSpeech } from "./lib/clips/index";
 import { createAI, type CloudflareLanguageModelId } from "agents/models/ai-sdk";
 import {
   resolveTenant,
@@ -70,6 +71,7 @@ import {
 
 export interface Env extends TracingEnv {
   INTEGRATION_ALLOWED_HOSTS?:string;
+  ASSETS?: Fetcher;
   DB: D1Database;
   TENANT_CONFIG: KVNamespace;
   AUDIO_BUCKET?: R2Bucket;
@@ -891,6 +893,16 @@ export class MizanVoiceAgent extends Agent<Env> {
   }
 
   private async synthesizeAgentSpeech(text: string) {
+    const libraryClip = await libraryClipForSpeech(this.env, this.sessionId ?? "", text);
+    if (libraryClip) {
+      console.info("TTS provider result", {
+        provider: libraryClip.provider,
+        mimeType: libraryClip.mimeType,
+        bytes: libraryClip.audio.byteLength,
+        attempts: libraryClip.attempts
+      });
+      return libraryClip;
+    }
     const config = this.elevenLabsConfig;
     if (!config?.voice_id) throw new Error("HQ voice config is unavailable");
     const result = await synthesizeSpeech(
